@@ -368,10 +368,14 @@ function findSyntaxAwareViolations(
   const evidence: EvidenceLine[] = [];
   const reportedLines = new Set<number>();
 
-  const isStdScoped = bannedIdentifier.startsWith('std::');
-  const baseName = isStdScoped
-    ? bannedIdentifier.slice('std::'.length)
-    : bannedIdentifier;
+  const parts = bannedIdentifier.split('::');
+  const baseName = parts[parts.length - 1];
+  const isStdScoped = parts[0] === 'std';
+  const isSimpleControlKeyword =
+    bannedIdentifier === 'for' ||
+    bannedIdentifier === 'while' ||
+    bannedIdentifier === 'do' ||
+    bannedIdentifier === 'goto';
 
   // Track global "using namespace std" and "using std::<name>"
   let hasUsingNamespaceStd = false;
@@ -415,35 +419,85 @@ function findSyntaxAwareViolations(
       namespaceStack.push(tokens[i + 1].value);
     } else if (token.type === 'RBRACE' && namespaceStack.length > 0) {
       // Approximate namespace close on RBRACE
-      // (safe for common student code layouts)
     }
 
-    if (token.type !== 'IDENT' || token.value !== baseName) {
+    if (
+      (token.type !== 'IDENT' && token.type !== 'KEYWORD') ||
+      token.value !== baseName
+    ) {
+      continue;
+    }
+
+    // Special case for language keywords (for, while, do, goto)
+    if (isSimpleControlKeyword && token.type === 'KEYWORD') {
+      if (!reportedLines.has(token.line)) {
+        reportedLines.add(token.line);
+        evidence.push({
+          line: token.line,
+          text: rawLines[token.line - 1],
+        });
+      }
       continue;
     }
 
     const prev = i > 0 ? tokens[i - 1] : null;
     const prev2 = i > 1 ? tokens[i - 2] : null;
 
-    // Check if this token is a member function access: obj.sort() or ptr->sort()
-    if (prev && (prev.type === 'DOT' || prev.type === 'ARROW')) {
+    // Check if preceded by full qualification (e.g. std::sort, std::ranges::sort, boost::integer::gcd)
+    let isFullyQualified = false;
+    if (parts.length > 1) {
+      let matchedPrefix = true;
+      for (let pIdx = parts.length - 2; pIdx >= 0; pIdx--) {
+        const offset = (parts.length - 1 - pIdx) * 2;
+        const colonToken = i - offset + 1 >= 0 ? tokens[i - offset + 1] : null;
+        const partToken = i - offset >= 0 ? tokens[i - offset] : null;
+
+        if (
+          !colonToken ||
+          colonToken.type !== 'COLON_COLON' ||
+          !partToken ||
+          partToken.value !== parts[pIdx]
+        ) {
+          matchedPrefix = false;
+          break;
+        }
+      }
+      if (matchedPrefix) {
+        isFullyQualified = true;
+      }
+    }
+
+    if (isFullyQualified) {
+      // If it's a "using std::sort;" declaration, skip the declaration itself
+      const declOffset = parts.length * 2 - 1;
+      if (
+        i >= declOffset &&
+        tokens[i - declOffset].type === 'KEYWORD' &&
+        tokens[i - declOffset].value === 'using'
+      ) {
+        continue;
+      }
+
+      if (!reportedLines.has(token.line)) {
+        reportedLines.add(token.line);
+        evidence.push({
+          line: token.line,
+          text: rawLines[token.line - 1],
+        });
+      }
       continue;
     }
 
-    // Check if preceded by a custom namespace: e.g. student::sort or my_ns::sort
+    // If preceded by :: but not matching full qualification, it belongs to another namespace
     if (prev && prev.type === 'COLON_COLON') {
-      if (prev2 && prev2.type === 'IDENT' && prev2.value === 'std') {
-        // If it's a "using std::sort;" declaration, do not treat the declaration itself
-        // as the call site; importedStdSymbols will flag the actual call site(s) below.
-        if (
-          i >= 3 &&
-          tokens[i - 3].type === 'KEYWORD' &&
-          tokens[i - 3].value === 'using'
-        ) {
-          continue;
-        }
-
-        // EXPLICIT std::sort -> DEFINITE VIOLATION
+      // Check if it's ranges::sort with using namespace std;
+      if (
+        hasUsingNamespaceStd &&
+        parts.length === 3 &&
+        parts[0] === 'std' &&
+        prev2 &&
+        prev2.value === parts[1]
+      ) {
         if (!reportedLines.has(token.line)) {
           reportedLines.add(token.line);
           evidence.push({
@@ -452,7 +506,17 @@ function findSyntaxAwareViolations(
           });
         }
       }
-      // If preceded by :: but not std (e.g. student::sort), NOT a violation
+      continue;
+    }
+
+    // Check if this token is a member function access: obj.sort() or ptr->sort()
+    // NOTE: If the banned identifier is an iterator method like rbegin/rend, it IS invoked via dot or arrow!
+    if (
+      isStdScoped &&
+      parts.length > 1 &&
+      prev &&
+      (prev.type === 'DOT' || prev.type === 'ARROW')
+    ) {
       continue;
     }
 
@@ -467,8 +531,8 @@ function findSyntaxAwareViolations(
       continue;
     }
 
-    // Unqualified call: sort(...)
-    // Case 1: Student explicitly wrote "using std::sort;"
+    // Unqualified symbol usage:
+    // Case A: Student explicitly wrote "using std::<name>;"
     if (importedStdSymbols.has(baseName)) {
       if (!reportedLines.has(token.line)) {
         reportedLines.add(token.line);
@@ -480,16 +544,34 @@ function findSyntaxAwareViolations(
       continue;
     }
 
-    // Case 2: "using namespace std" is active
-    if (isStdScoped && hasUsingNamespaceStd) {
-      // If the student defined their OWN function named `sort`,
-      // an unqualified call `sort(...)` resolves to the student's own function!
-      // (Class project brief page 1 explicitly requires not deducting student's own function)
+    // Case B: Banned identifier without namespace (e.g. `rbegin`, `rend`, `bsearch`, `qsort`, `__gcd`)
+    if (parts.length === 1) {
+      // If it's a user defined function in the same file, do not flag
+      if (
+        userFunctions.has(baseName) &&
+        prev &&
+        prev.type !== 'DOT' &&
+        prev.type !== 'ARROW'
+      ) {
+        continue;
+      }
+      if (!reportedLines.has(token.line)) {
+        reportedLines.add(token.line);
+        evidence.push({
+          line: token.line,
+          text: rawLines[token.line - 1],
+        });
+      }
+      continue;
+    }
+
+    // Case C: "using namespace std" is active for std:: symbols
+    if (isStdScoped && hasUsingNamespaceStd && parts.length === 2) {
+      // If student defined their OWN function named e.g. sort, do not deduct
       if (userFunctions.has(baseName)) {
         continue;
       }
 
-      // If student did NOT define their own `sort`, this call resolves to std::sort -> VIOLATION
       if (!reportedLines.has(token.line)) {
         reportedLines.add(token.line);
         evidence.push({
