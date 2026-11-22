@@ -5,6 +5,12 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ['node_modules/**', 'dist/**', 'coverage/**'],
+    ignores: [
+      'node_modules/**',
+      'dist/**',
+      'coverage/**',
+      'dev-set/**',
+      'eval.mjs',
+    ],
   }
 );

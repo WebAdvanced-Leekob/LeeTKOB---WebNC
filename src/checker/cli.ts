@@ -145,6 +145,54 @@ function discoverProblems(datasetDir: string): ProblemSpec[] {
 
   const problems: ProblemSpec[] = [];
 
+  // Check if datasetDir follows the official layout: problems/ and solutions/
+  const problemsDir = path.join(resolvedPath, 'problems');
+  const solutionsDir = path.join(resolvedPath, 'solutions');
+  if (fs.existsSync(problemsDir) && fs.existsSync(solutionsDir)) {
+    const pEntries = fs.readdirSync(problemsDir, { withFileTypes: true });
+    for (const pEntry of pEntries) {
+      if (pEntry.isDirectory() && !pEntry.name.startsWith('.')) {
+        const problemName = pEntry.name;
+        const pSubPath = path.join(problemsDir, problemName);
+        const cPath = path.join(pSubPath, 'constraints.json');
+        if (fs.existsSync(cPath)) {
+          const statementPath = path.join(pSubPath, 'statement.md');
+          const statement = fs.existsSync(statementPath)
+            ? fs.readFileSync(statementPath, 'utf8')
+            : `Problem ${problemName}`;
+          const constraintsRaw = JSON.parse(fs.readFileSync(cPath, 'utf8'));
+          const constraints = parseConstraints(constraintsRaw);
+
+          const sSubPath = path.join(solutionsDir, problemName);
+          const solutionFiles: { id: string; filePath: string }[] = [];
+          if (fs.existsSync(sSubPath)) {
+            const sEntries = fs.readdirSync(sSubPath, { withFileTypes: true });
+            for (const sEntry of sEntries) {
+              if (sEntry.isFile() && sEntry.name.endsWith('.cpp')) {
+                const baseName = path.basename(sEntry.name, '.cpp');
+                const id = `${problemName}/${baseName}`;
+                solutionFiles.push({
+                  id,
+                  filePath: path.join(sSubPath, sEntry.name),
+                });
+              }
+            }
+          }
+          solutionFiles.sort((a, b) => a.id.localeCompare(b.id));
+          problems.push({
+            problemName,
+            statement,
+            constraints,
+            solutionFiles,
+          });
+        }
+      }
+    }
+    // Sort problems deterministically by name
+    problems.sort((a, b) => a.problemName.localeCompare(b.problemName));
+    return problems;
+  }
+
   // Check if datasetDir itself is a single problem (contains constraints.json)
   const singleConstraintsPath = path.join(resolvedPath, 'constraints.json');
   if (fs.existsSync(singleConstraintsPath)) {

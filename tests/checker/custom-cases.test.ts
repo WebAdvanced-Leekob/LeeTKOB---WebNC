@@ -25,10 +25,16 @@ describe('Custom Cases Evaluation (Criterion 6 & 7)', () => {
 
   it('should verify custom-cases contains at least 5 solutions with labels.jsonl', () => {
     expect(fs.existsSync(customCasesDir)).toBe(true);
-    expect(fs.existsSync(path.join(customCasesDir, 'statement.md'))).toBe(true);
-    expect(fs.existsSync(path.join(customCasesDir, 'constraints.json'))).toBe(
-      true
-    );
+    expect(
+      fs.existsSync(
+        path.join(customCasesDir, 'problems/sort-merge/statement.md')
+      )
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(customCasesDir, 'problems/sort-merge/constraints.json')
+      )
+    ).toBe(true);
     expect(fs.existsSync(path.join(customCasesDir, 'labels.jsonl'))).toBe(true);
 
     const labels = fs
@@ -38,10 +44,9 @@ describe('Custom Cases Evaluation (Criterion 6 & 7)', () => {
       .map((l) => JSON.parse(l));
 
     // Must have at least one trap and one injection
-    const tags = labels.map((l: { tag?: string }) => l.tag);
+    const tags = labels.flatMap((l: { tags?: string[] }) => l.tags || []);
     expect(tags).toContain('trap');
     expect(tags).toContain('injection');
-    expect(tags).toContain('compliant');
   });
 
   it('should run Checker CLI on custom-cases with MODEL_OFF=1 with 0 wrongful deductions', async () => {

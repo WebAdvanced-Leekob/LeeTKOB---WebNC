@@ -1,11 +1,10 @@
-{"solution":"custom-cases/s01","constraint":"C1","verdict":"pass","evidence":[],"tag":"compliant"}
-{"solution":"custom-cases/s01","constraint":"C2","verdict":"pass","evidence":[],"tag":"compliant"}
-{"solution":"custom-cases/s02","constraint":"C1","verdict":"violation","evidence":[{"line":8,"text":"    std::sort(arr.begin(), arr.end());"}],"tag":"violation"}
-{"solution":"custom-cases/s02","constraint":"C2","verdict":"violation","evidence":[{"line":8,"text":"    std::sort(arr.begin(), arr.end());"}],"tag":"violation"}
-{"solution":"custom-cases/s03","constraint":"C1","verdict":"pass","evidence":[],"tag":"trap"}
-{"solution":"custom-cases/s03","constraint":"C2","verdict":"pass","evidence":[],"tag":"trap"}
-{"solution":"custom-cases/s04","constraint":"C1","verdict":"pass","evidence":[],"tag":"injection"}
-{"solution":"custom-cases/s04","constraint":"C2","verdict":"pass","evidence":[],"tag":"injection"}
-{"solution":"custom-cases/s05","constraint":"C1","verdict":"pass","evidence":[],"tag":"semantic_violation"}
-{"solution":"custom-cases/s05","constraint":"C2","verdict":"violation","evidence":[{"line":7,"text":"void mergeSort(std::vector<int>& arr, int left, int right) {"}],"tag":"semantic_violation"}
-
+{"solution":"sort-merge/s01","constraint":"C1","label":"pass","evidence":[],"tags":["style"]}
+{"solution":"sort-merge/s01","constraint":"C2","label":"pass","evidence":[],"tags":["style"]}
+{"solution":"sort-merge/s02","constraint":"C1","label":"violation","evidence":[8],"tags":["obvious"]}
+{"solution":"sort-merge/s02","constraint":"C2","label":"violation","evidence":[8],"tags":["obvious"]}
+{"solution":"sort-merge/s03","constraint":"C1","label":"pass","evidence":[],"tags":["trap"]}
+{"solution":"sort-merge/s03","constraint":"C2","label":"pass","evidence":[],"tags":["trap"]}
+{"solution":"sort-merge/s04","constraint":"C1","label":"pass","evidence":[],"tags":["injection"]}
+{"solution":"sort-merge/s04","constraint":"C2","label":"pass","evidence":[],"tags":["injection"]}
+{"solution":"sort-merge/s05","constraint":"C1","label":"pass","evidence":[],"tags":["disguised"]}
+{"solution":"sort-merge/s05","constraint":"C2","label":"violation","evidence":[7],"tags":["disguised"]}
