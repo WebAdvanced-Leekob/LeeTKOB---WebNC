@@ -1,0 +1,29 @@
+# Standalone Constraint Checker Container
+# CSC13114 - LeeTKOB PA#3 (Criterion 6 — 10 points)
+#
+# Usage:
+#   docker build -t leetkob-checker -f docker/Dockerfile.checker .
+#   docker run --network none -e MODEL_OFF=1 -v $(pwd)/dev-set:/data leetkob-checker --dataset /data --out /data/predictions.jsonl
+
+FROM node:20-alpine AS install
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM install AS build
+COPY tsconfig.json tsconfig.build.json ./
+COPY src ./src
+RUN npm run build && npm prune --omit=dev
+
+FROM node:20-alpine AS run
+ENV NODE_ENV=production
+WORKDIR /app
+
+COPY --from=build --chown=node:node /app/package.json ./
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+
+USER node
+
+ENTRYPOINT ["node", "dist/checker/cli.js"]
+CMD ["--help"]

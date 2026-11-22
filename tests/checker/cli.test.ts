@@ -31,7 +31,12 @@ describe('Checker CLI & MODEL_OFF Mode (Criterion 6 — 10 points)', () => {
 
   describe('CLI Arguments Parsing', () => {
     it('should parse --dataset and --out flags correctly', () => {
-      const args = ['--dataset', '/path/to/dataset', '--out', '/path/to/out.jsonl'];
+      const args = [
+        '--dataset',
+        '/path/to/dataset',
+        '--out',
+        '/path/to/out.jsonl',
+      ];
       const parsed = parseCliArgs(args);
 
       expect(parsed.datasetDir).toBe('/path/to/dataset');
@@ -40,7 +45,13 @@ describe('Checker CLI & MODEL_OFF Mode (Criterion 6 — 10 points)', () => {
     });
 
     it('should recognize --model-off flag', () => {
-      const args = ['--dataset', './data', '--out', './out.jsonl', '--model-off'];
+      const args = [
+        '--dataset',
+        './data',
+        '--out',
+        './out.jsonl',
+        '--model-off',
+      ];
       const parsed = parseCliArgs(args);
 
       expect(parsed.modelOff).toBe(true);
