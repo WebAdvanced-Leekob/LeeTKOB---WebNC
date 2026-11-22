@@ -28,3 +28,4 @@ int main() {
     student_algo::sort(a, 0, a.size() - 1);
     return 0;
 }
+
