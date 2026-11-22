@@ -16,7 +16,7 @@ export interface ModelPricing {
 }
 
 /**
- * Standard pricing for Google Gemini 1.5 Flash (as of current Google AI Studio pricing).
+ * Standard baseline pricing for Google Gemini 1.5 Flash.
  * Prompt tokens: $0.075 per 1,000,000 tokens
  * Completion tokens: $0.300 per 1,000,000 tokens
  */
@@ -25,6 +25,30 @@ export const GEMINI_15_FLASH_PRICING: ModelPricing = {
   costPerMillionPromptTokens: 0.075,
   costPerMillionCompletionTokens: 0.3,
 };
+
+/**
+ * Resolves model pricing dynamically from environment variables,
+ * falling back to GEMINI_15_FLASH_PRICING defaults if not specified.
+ */
+export function getModelPricingFromEnv(): ModelPricing {
+  const modelName = process.env.MODEL_NAME || GEMINI_15_FLASH_PRICING.modelName;
+  const promptCost = process.env.MODEL_PROMPT_PRICE_PER_M
+    ? Number(process.env.MODEL_PROMPT_PRICE_PER_M)
+    : GEMINI_15_FLASH_PRICING.costPerMillionPromptTokens;
+  const completionCost = process.env.MODEL_COMPLETION_PRICE_PER_M
+    ? Number(process.env.MODEL_COMPLETION_PRICE_PER_M)
+    : GEMINI_15_FLASH_PRICING.costPerMillionCompletionTokens;
+
+  return {
+    modelName,
+    costPerMillionPromptTokens: Number.isNaN(promptCost)
+      ? GEMINI_15_FLASH_PRICING.costPerMillionPromptTokens
+      : promptCost,
+    costPerMillionCompletionTokens: Number.isNaN(completionCost)
+      ? GEMINI_15_FLASH_PRICING.costPerMillionCompletionTokens
+      : completionCost,
+  };
+}
 
 export interface LabCostParams {
   submissionsCount: number;
@@ -52,7 +76,7 @@ export function calculateLabCost(params: LabCostParams): LabCostResult {
     submissionsCount,
     avgPromptTokens,
     avgCompletionTokens,
-    pricing = GEMINI_15_FLASH_PRICING,
+    pricing = getModelPricingFromEnv(),
   } = params;
 
   const totalPromptTokens = submissionsCount * avgPromptTokens;

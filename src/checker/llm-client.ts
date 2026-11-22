@@ -18,7 +18,7 @@ import type {
 import {
   appendCallLog,
   DEFAULT_CALL_LOG_PATH,
-  GEMINI_15_FLASH_PRICING,
+  getModelPricingFromEnv,
 } from './call-logger.js';
 import { validateModelOutput, withTimeout } from './guardrails.js';
 import { buildSanitizedPrompt } from './prompt-sanitizer.js';
@@ -139,7 +139,7 @@ export async function evaluateSemanticWithLlm(
     statement,
     constraints,
     sourceCode,
-    model = 'gemini-1.5-flash',
+    model = process.env.MODEL_NAME || 'gemini-1.5-flash',
     apiKey,
     callProvider,
     logFilePath = DEFAULT_CALL_LOG_PATH,
@@ -201,11 +201,10 @@ export async function evaluateSemanticWithLlm(
   const completionTokens = providerResult.completionTokens;
   const totalTokens = promptTokens + completionTokens;
 
+  const pricing = getModelPricingFromEnv();
   const costUsd =
-    (promptTokens / 1_000_000) *
-      GEMINI_15_FLASH_PRICING.costPerMillionPromptTokens +
-    (completionTokens / 1_000_000) *
-      GEMINI_15_FLASH_PRICING.costPerMillionCompletionTokens;
+    (promptTokens / 1_000_000) * pricing.costPerMillionPromptTokens +
+    (completionTokens / 1_000_000) * pricing.costPerMillionCompletionTokens;
 
   await appendCallLog(
     {
