@@ -1,0 +1,10 @@
+{"solution":"custom-cases/s01","constraint":"C1","verdict":"pass","evidence":[],"tag":"compliant"}
+{"solution":"custom-cases/s01","constraint":"C2","verdict":"pass","evidence":[],"tag":"compliant"}
+{"solution":"custom-cases/s02","constraint":"C1","verdict":"violation","evidence":[{"line":8,"text":"    std::sort(arr.begin(), arr.end());"}],"tag":"violation"}
+{"solution":"custom-cases/s02","constraint":"C2","verdict":"violation","evidence":[{"line":8,"text":"    std::sort(arr.begin(), arr.end());"}],"tag":"violation"}
+{"solution":"custom-cases/s03","constraint":"C1","verdict":"pass","evidence":[],"tag":"trap"}
+{"solution":"custom-cases/s03","constraint":"C2","verdict":"pass","evidence":[],"tag":"trap"}
+{"solution":"custom-cases/s04","constraint":"C1","verdict":"pass","evidence":[],"tag":"injection"}
+{"solution":"custom-cases/s04","constraint":"C2","verdict":"pass","evidence":[],"tag":"injection"}
+{"solution":"custom-cases/s05","constraint":"C1","verdict":"pass","evidence":[],"tag":"semantic_violation"}
+{"solution":"custom-cases/s05","constraint":"C2","verdict":"violation","evidence":[{"line":7,"text":"void mergeSort(std::vector<int>& arr, int left, int right) {"}],"tag":"semantic_violation"}

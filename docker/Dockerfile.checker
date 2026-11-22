@@ -27,3 +27,4 @@ USER node
 
 ENTRYPOINT ["node", "dist/checker/cli.js"]
 CMD ["--help"]
+

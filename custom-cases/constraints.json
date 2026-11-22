@@ -1,0 +1,14 @@
+[
+  {
+    "id": "C1",
+    "description": "Do not use `std::sort` or `std::stable_sort`",
+    "deduction": 3.0,
+    "type": "ban-list"
+  },
+  {
+    "id": "C2",
+    "description": "Must implement merge sort recursively",
+    "deduction": 5.0,
+    "type": "semantic"
+  }
+]
