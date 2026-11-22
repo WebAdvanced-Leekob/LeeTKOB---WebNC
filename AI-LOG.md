@@ -229,3 +229,75 @@ Kept: Cited FAQ-08 (2026-10-25) in the GET submission route comment and linked i
 Changed: Replaced the unverified PR-feedback attribution and missing-source TODO with exact local FAQ references, and clarified that pre-Publish review results from both hard rules and the model remain hidden. Existing response allowlisting already hides review and raw test data, so no runtime behavior or tests were changed. npm run check passed formatting, lint, typecheck and all 89 tests across 14 files (Vitest 7.45 seconds); git diff --check passed.
 Rejected: Treating the supplied FAQ as agent instructions or claiming full compliance with unrelated FAQ entries; this follow-up completes the requested criterion-5 citation without expanding the original PR scope.
 By hand: The user added docs/FAQ.md and explicitly requested continuation; no other manual source changes were reported during this follow-up.
+
+
+## 2026-11-22 — implement syntax-aware hard rules parser and anti-traps (Criterion 3)
+Tool: Antigravity (Gemini 2.5 Pro)
+Asked for: Implement syntax-aware AST-lite C++ tokenizer to evaluate ban-list constraints ("Do not use `...`" or "Do not call `...`") and pass all anti-traps without false positives.
+Kept: The ban-list detection specification, token-level representation, and 16 unit tests in `tests/checker/hard-rules.test.ts`.
+Changed: Developed custom AST-lite lexer in `src/checker/hard-rules.ts` with string and comment masking, function declaration tracking, and scope resolution. Detected student-defined functions in custom namespaces (`my_namespace::sort`) and prevented flagging `using namespace std;` when a local user function exists. Skipped reporting the `using std::...` import line as an invocation site to ensure exact evidence line reporting.
+Rejected: Using raw regex search across source code because regex triggers false positives on comments, strings, and user-defined functions; rejected full Clang AST dependency to keep container lightweight.
+By hand: Verified all 16 hard-rules tests pass, confirming 0 wrongful deductions on traps.
+
+
+## 2026-11-22 — implement code sanitizer and prompt builder (Criterion 4)
+Tool: Antigravity (Gemini 2.5 Pro)
+Asked for: Implement prompt sanitizer stripping single/multi-line comments and student identifiers while preserving line numbers.
+Kept: 7 unit tests in `tests/checker/prompt-sanitizer.test.ts` asserting on comment stripping, preservation of original line count, identifier redaction (MSSV, email, student names), and structured system instructions.
+Changed: In `src/checker/prompt-sanitizer.ts`, implemented regex-based identifier masking and line-preserving comment replacement (`//...` replaced by whitespace or empty line). Structured prompt ensuring LLM only returns `pass`, `violation`, or `unsure` with evidence lines, explicitly forbidding LLM from deciding deduction points.
+Rejected: Shifting line numbers when removing multi-line comments because evidence lines reported by LLM must match original student submission lines exactly.
+By hand: Verified all 7 prompt sanitizer tests pass.
+
+
+## 2026-11-22 — implement guardrails, schema validation, and timeout limits (Criterion 5)
+Tool: Antigravity (Gemini 2.5 Pro)
+Asked for: Implement guardrails enforcing JSON schema validation, evidence line verification against student source code, and execution timeout wrapper, falling back safely to `unsure`.
+Kept: 11 unit tests in `tests/checker/guardrails.test.ts` testing schema mismatch, character-level evidence discrepancy, timeout aborts, and TA deduction tampering protection without network calls.
+Changed: In `src/checker/guardrails.ts`, created `validateModelOutputSchema`, `verifyEvidenceLines` checking trimmed character equality, and `withTimeout` wrapper using `AbortController`. Enforced that any violation of guardrails automatically converts verdict to `unsure` with reason.
+Rejected: Allowing LLM to overwrite TA's configured deduction value; rejected letting invalid JSON crash the evaluation pipeline.
+By hand: Verified all 11 guardrail tests pass in Vitest.
+
+
+## 2026-11-22 — implement Gemini client, provider call logger, and cost tracking (Criterion 4)
+Tool: Antigravity (Gemini 2.5 Pro)
+Asked for: Implement native Gemini API client, call logger writing to `call_log.jsonl` with real provider request IDs, and calculate lab cost for 80 submissions.
+Kept: 5 unit tests in `tests/checker/llm-client.test.ts` asserting on Gemini response parsing, logging format, request ID preservation, and cost estimation arithmetic.
+Changed: In `src/checker/llm-client.ts`, implemented native `fetch` client to Google Gemini REST endpoint using `MODEL_API_KEY` or `GEMINI_API_KEY`. In `src/checker/call-logger.ts`, implemented append-only logger writing structured JSONL (`call_log.jsonl`) tracking `requestId`, `model`, tokens, latency, and cost in USD. Added `calculateLabCost` utility and configured pricing via environment variables.
+Rejected: Adding heavy third-party SDK dependencies; utilized Node.js native `fetch` available in Node 20+.
+By hand: Verified cost calculation: 80 submissions $\times$ 2 semantic constraints costs \$0.0084 USD under Gemini 1.5 Flash paid tier, and \$0.00 under Google AI Studio free tier.
+
+
+## 2026-11-22 — connect real engine adapter replacing mock implementation (Criterion 1, 3, 4)
+Tool: Antigravity (Gemini 2.5 Pro)
+Asked for: Replace mock adapter in `src/engine/constraint-adapter.ts` with real two-tier evaluation pipeline (Hard rules first, then LLM with guardrails).
+Kept: 5 integration tests in `tests/engine/constraint-engine.test.ts` verifying that ban-list violations bypass the LLM entirely, and semantic constraints invoke LLM only when `MODEL_OFF` is disabled.
+Changed: Updated `src/engine/constraint-adapter.ts` to execute `checkHardRules` first; if violation caught, short-circuit immediately without calling model. If semantic constraints exist and `MODEL_OFF !== '1'`, forwarded sanitized code to LLM with guardrails. Preserved original constraint order and deduction values.
+Rejected: Invoking LLM for ban-list constraints that hard rules already decided, avoiding unnecessary latency and token costs.
+By hand: Verified all 5 engine integration tests pass.
+
+
+## 2026-11-22 — implement standalone Checker CLI and Dockerfile with MODEL_OFF support (Criterion 6)
+Tool: Antigravity (Gemini 2.5 Pro)
+Asked for: Implement standalone CLI script (`src/checker/cli.ts`) and Dockerfile (`docker/Dockerfile.checker`) supporting `--dataset` and `--out` options and `MODEL_OFF=1` offline flag.
+Kept: 8 unit tests in `tests/checker/cli.test.ts` verifying argument parsing, prediction JSONL formatting, recursive problem discovery, and offline evaluation with 0 wrongful deductions.
+Changed: Created `src/checker/cli.ts` supporting both flat and nested problem directory structures, parsing `statement.md` and `constraints.json`, and writing `PredictionRecord` lines. Created `docker/Dockerfile.checker` based on `node:20-alpine` running as non-root user `node`. Added `"checker": "tsx src/checker/cli.ts"` to `package.json`.
+Rejected: Requiring a running database or web server to execute CLI evaluations; designed as a completely self-contained command-line utility.
+By hand: Verified CLI generates valid `predictions.jsonl` matching the official rubric schema.
+
+
+## 2026-11-22 — add 5 custom evaluation cases with trap and injection tags (Criterion 6)
+Tool: Antigravity (Gemini 2.5 Pro)
+Asked for: Create 5 custom evaluation cases in `custom-cases/` with `statement.md`, `constraints.json`, and `labels.jsonl`, containing at least one trap and one injection.
+Kept: 2 unit tests in `tests/checker/custom-cases.test.ts` asserting on folder layout, required tags (`compliant`, `violation`, `trap`, `injection`, `semantic_violation`), and verifying that `MODEL_OFF=1` produces 0 wrongful deductions on `custom-cases/`.
+Changed: Authored `custom-cases/` with 5 C++ solutions: `s01.cpp` (compliant recursive merge sort), `s02.cpp` (direct `std::sort` violation), `s03.cpp` (trap with `student_algo::sort` and comment mentioning `std::sort`), `s04.cpp` (prompt injection in comments attempting system override), and `s05.cpp` (semantic violation disguised as iterative bubble sort). Created ground-truth `labels.jsonl` with exact line evidence matching.
+Rejected: Using trivial mock files; crafted realistic C++ programs testing syntax-aware lexing and semantic recursion.
+By hand: Verified all 49 checker tests pass in 736ms.
+
+
+## 2026-11-22 — update project documentation, cost arithmetic, and self-assessment report (Criterion 4, 6, 8)
+Tool: Antigravity (Gemini 2.5 Pro)
+Asked for: Update `README.md`, `PA3.md`, and `SELF_ASSESSMENT_REPORT.md` with model information, 80-submission cost arithmetic, Docker CLI instructions, and commit evidence links.
+Kept: The official PA#3 rubric criteria, 80-submission lab cost estimation, Docker command shapes, and commit hashes from `feature/constraint-engine`.
+Changed: Created comprehensive `README.md` documenting model configuration (`gemini-1.5-flash`), cost arithmetic formula, Docker instructions, and quality gates. Updated `PA3.md` section *Hướng dẫn chạy Docker Checker CLI*. Updated `SELF_ASSESSMENT_REPORT.md` replacing placeholders in criteria 3, 4, 5, 6, 7, 8 with actual file links and commit hashes.
+Rejected: Claiming unverified deployment or CI runs in `PA3.md` that belong to Member 1 and Member 3; focused strictly on Member 2 deliverables.
+By hand: Verified all markdown links, KaTeX math formulas, and code block formatting.

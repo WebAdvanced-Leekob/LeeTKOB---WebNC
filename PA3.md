@@ -32,7 +32,26 @@ Theo [FAQ-08 của Product Owners (2026-10-25)](docs/FAQ.md#faq-08), trước kh
 
 ## Hướng dẫn chạy Docker Checker CLI
 
-[ĐỂ TRỐNG — TV2 cung cấp]
+Thành viên 2 cung cấp Dockerfile độc lập tại `docker/Dockerfile.checker` và công cụ dòng lệnh `src/checker/cli.ts` phục vụ đánh giá độc lập theo Tiêu chí 6.
+
+### 1. Build Docker image
+```bash
+docker build -t leetkob-checker -f docker/Dockerfile.checker .
+```
+
+### 2. Chạy chấm bộ test ở chế độ Offline (MODEL_OFF=1, không mạng)
+```bash
+docker run --network none -e MODEL_OFF=1 -v $(pwd)/custom-cases:/data leetkob-checker --dataset /data --out /data/predictions.jsonl
+```
+
+### 3. Chạy trực tiếp qua Node/npm (Local development)
+```bash
+# Chạy với MODEL_OFF=1 (Hard rules only, semantic -> unsure, 0 wrongful deductions)
+MODEL_OFF=1 npm run checker -- --dataset custom-cases --out custom-cases/predictions.jsonl
+
+# Chạy với mô hình AI thật (yêu cầu MODEL_API_KEY trong file .env)
+npm run checker -- --dataset custom-cases --out custom-cases/predictions.jsonl
+```
 
 ## Link video demo
 
