@@ -98,6 +98,8 @@ export function isBanListConstraint(constraint: ConstraintDefinition): boolean {
 
 /**
  * Extracts banned identifiers enclosed in backticks from constraint description.
+ * If no backticks are found, falls back to parsing identifiers from common phrases
+ * such as "Do not call std::sort" or "Do not use qsort".
  */
 export function extractBannedIdentifiers(description: string): string[] {
   const matches = description.matchAll(/`([^`]+)`/g);
@@ -105,6 +107,42 @@ export function extractBannedIdentifiers(description: string): string[] {
   for (const match of matches) {
     if (match[1]) {
       identifiers.push(match[1].trim());
+    }
+  }
+  if (identifiers.length > 0) {
+    return identifiers;
+  }
+
+  // Fallback: If no backticks are found, extract C++ identifiers or scoped identifiers
+  const words =
+    description.match(/(?:std::[a-zA-Z0-9_:]+|[a-zA-Z_][a-zA-Z0-9_]*)/g) || [];
+  const stopWords = new Set([
+    'do',
+    'not',
+    'use',
+    'call',
+    'ban',
+    'banned',
+    'a',
+    'the',
+    'function',
+    'functions',
+    'library',
+    'or',
+    'and',
+    'method',
+    'methods',
+    'loop',
+    'loops',
+    'statement',
+    'statements',
+    'must',
+    'should',
+    'any',
+  ]);
+  for (const word of words) {
+    if (!stopWords.has(word.toLowerCase())) {
+      identifiers.push(word);
     }
   }
   return identifiers;
