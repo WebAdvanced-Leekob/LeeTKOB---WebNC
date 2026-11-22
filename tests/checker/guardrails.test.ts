@@ -2,13 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   applyGuardrails,
   validateModelOutput,
-  verifyEvidenceLines,
   withTimeout,
 } from '../../src/checker/guardrails.js';
-import type {
-  ConstraintDefinition,
-  ConstraintVerdict,
-} from '../../src/types/constraint.types.js';
+import type { ConstraintDefinition } from '../../src/types/constraint.types.js';
 
 describe('Guardrails & First Limits (Criterion 5 — 10 points)', () => {
   const semanticConstraint: ConstraintDefinition = {
