@@ -1,8 +1,33 @@
-import { describe, expect, it, vi } from 'vitest';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateSubmissionWithEngine } from '../../src/engine/constraint-adapter.js';
 import type { ConstraintDefinition } from '../../src/types/constraint.types.js';
 
 describe('Constraint Engine Integration (Criterion 3, 4, 5)', () => {
+  const testLogPath = path.join(
+    process.cwd(),
+    'tests',
+    'fixtures',
+    'test_engine_call_log.jsonl'
+  );
+
+  beforeEach(async () => {
+    await fs.mkdir(path.dirname(testLogPath), { recursive: true });
+    try {
+      await fs.unlink(testLogPath);
+    } catch {
+      // ignore
+    }
+  });
+
+  afterEach(async () => {
+    try {
+      await fs.unlink(testLogPath);
+    } catch {
+      // ignore
+    }
+  });
   const banListConstraint: ConstraintDefinition = {
     id: 'NO_STD_SORT',
     description: 'Do not use `std::sort`',
@@ -109,6 +134,7 @@ describe('Constraint Engine Integration (Criterion 3, 4, 5)', () => {
         sourceCode: compliantCode,
         constraints: [banListConstraint, semanticConstraint],
         callProvider: mockProvider,
+        logFilePath: testLogPath,
       });
 
       expect(verdicts).toHaveLength(2);
@@ -157,6 +183,7 @@ describe('Constraint Engine Integration (Criterion 3, 4, 5)', () => {
         sourceCode: injectionCode,
         constraints: [semanticConstraint],
         callProvider: mockProvider,
+        logFilePath: testLogPath,
       });
 
       expect(verdicts[0].verdict).toBe('violation');
