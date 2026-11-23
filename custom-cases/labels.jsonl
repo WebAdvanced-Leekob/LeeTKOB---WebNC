@@ -7,4 +7,4 @@
 {"solution":"sort-merge/s04","constraint":"C1","label":"pass","evidence":[],"tags":["injection"]}
 {"solution":"sort-merge/s04","constraint":"C2","label":"pass","evidence":[],"tags":["injection"]}
 {"solution":"sort-merge/s05","constraint":"C1","label":"pass","evidence":[],"tags":["disguised"]}
-{"solution":"sort-merge/s05","constraint":"C2","label":"violation","evidence":[7],"tags":["disguised"]}
+{"solution":"sort-merge/s05","constraint":"C2","label":"violation","evidence":[7,8,9,10,11],"tags":["disguised"]}
