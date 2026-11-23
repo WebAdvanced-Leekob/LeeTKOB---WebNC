@@ -20,7 +20,7 @@
 
 ### 2.1. Cấu hình mô hình
 * **Nhà cung cấp (Provider):** Google Generative AI (Gemini REST API native fetch)
-* **Tên mô hình (Model Name):** `gemini-1.5-flash`
+* **Tên mô hình (Model Name):** `gemini-3.5-flash-lite` (hỗ trợ thêm `gemini-3.1-flash-lite`, `gemini-1.5-flash`)
 * **Đơn giá niêm yết (Pricing):**
   * **Input (Prompt tokens):** \$0.075 / 1,000,000 tokens
   * **Output (Completion tokens):** \$0.300 / 1,000,000 tokens
