@@ -11,6 +11,7 @@
  * - Flexible dataset layouts (root folder or problem subfolders)
  */
 
+import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -298,6 +299,11 @@ export async function runCheckerCli(
 
   for (const problem of problems) {
     for (const sol of problem.solutionFiles) {
+      if (process.env.MODEL_OFF !== '1' && processedSolutions > 0) {
+        // Respect Google AI Studio Free Tier rate limit (15 RPM)
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+
       processedSolutions++;
       const sourceCode = fs.readFileSync(sol.filePath, 'utf8');
 
