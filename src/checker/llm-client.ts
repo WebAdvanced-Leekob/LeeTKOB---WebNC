@@ -10,6 +10,7 @@
  * without opening any network connection.
  */
 
+import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import type {
   ConstraintDefinition,
@@ -63,28 +64,54 @@ export async function callGeminiApi(
     );
   }
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-  const startTime = Date.now();
+  const normalizedModel = model.startsWith('models/') ? model.slice(7) : model;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${normalizedModel}:generateContent?key=${key}`;
+  const maxRetries = 2;
+  let attempt = 0;
+  let response!: Response;
+  let latencyMs = 0;
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [{ text: prompt }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.1,
-        responseMimeType: 'application/json',
+  while (attempt <= maxRetries) {
+    const startTime = Date.now();
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': key,
       },
-    }),
-  });
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: 'application/json',
+        },
+      }),
+    });
 
-  const latencyMs = Date.now() - startTime;
+    latencyMs = Date.now() - startTime;
+    if (
+      (response.status === 503 || response.status === 429) &&
+      attempt < maxRetries
+    ) {
+      attempt++;
+      // Exponential backoff with jitter: 3.5s -> 7.0s + jitter
+      const baseDelay = 3500 * Math.pow(2, attempt - 1);
+      const jitter = Math.floor(Math.random() * 800);
+      const waitTimeMs = baseDelay + jitter;
+      if (process.env.NODE_ENV !== 'test') {
+        console.log(
+          `[LLM Client] Máy chủ tạm bận (${response.status}), tự động chờ ${(waitTimeMs / 1000).toFixed(1)}s rồi thử lại (lượt ${attempt}/${maxRetries})...`
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, waitTimeMs));
+      continue;
+    }
+    break;
+  }
   const requestId =
     response.headers.get('x-goog-request-id') ||
     response.headers.get('request-id') ||
@@ -143,7 +170,7 @@ export async function evaluateSemanticWithLlm(
     apiKey,
     callProvider,
     logFilePath = DEFAULT_CALL_LOG_PATH,
-    timeoutMs = 15000,
+    timeoutMs = 30000,
   } = params;
 
   // Filter semantic constraints (hard rules handle ban-list constraints)
@@ -186,6 +213,10 @@ export async function evaluateSemanticWithLlm(
   } catch (error) {
     const isTimeout =
       error instanceof Error && error.message.includes('timed out');
+    const msg = error instanceof Error ? error.message : String(error);
+    if (!isTimeout && process.env.NODE_ENV !== 'test') {
+      console.warn(`[LLM Client Warning] ${msg}`);
+    }
     return semanticConstraints.map((c) => ({
       constraintId: c.id,
       verdict: 'unsure',
