@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "seed:accounts": "tsx scripts/seed-accounts.ts",
     "dev": "tsx watch src/server.ts",
+    "checker": "tsx src/checker/cli.ts",
     "lint": "eslint .",
     "format:check": "prettier --check .",
     "format:fix": "prettier --write .",

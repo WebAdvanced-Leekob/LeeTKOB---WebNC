@@ -120,10 +120,7 @@ describe('Full Pipeline — Criterion 1 Scenario', () => {
     const submissionId3 = await submit(injectionCode);
     expect(new Set([submissionId1, submissionId2, submissionId3]).size).toBe(3);
 
-    // 5. Run the real worker, sandbox runner and current TV2 adapter.
-    // The adapter is still a deterministic fixture: first constraint violates,
-    // second passes for every source. This test verifies orchestration, not
-    // clean/violation/injection detection, which belongs to the TV2 engine.
+    // 5. Run the real worker, sandbox runner and TV2 constraint engine.
     await defaultJudgeWorker.startAndDrain();
     for (const submissionId of [submissionId1, submissionId2, submissionId3]) {
       expect(defaultDataStore.getSubmission(submissionId)).toMatchObject({
@@ -180,11 +177,78 @@ describe('Full Pipeline — Criterion 1 Scenario', () => {
     expect(queue.status).toBe(200);
     const { items, pagination } = queue.body as ReviewQueueResponse;
     expect(items).toHaveLength(6);
-    for (const [submissionId, sourceCode] of [
+
+    const violationLine =
+      violationCode
+        .split('\n')
+        .findIndex((line) => line.includes(sortCall.trim())) + 1;
+
+    const expectedVerdicts: Record<
+      string,
+      Array<{
+        constraintId: string;
+        verdict: 'pass' | 'violation' | 'unsure';
+        suggestedDeduction: number;
+        evidence: Array<{ line: number; text: string }>;
+        unsureReason: string | null;
+      }>
+    > = {
+      [submissionId1]: [
+        {
+          constraintId: 'NO_STD_SORT',
+          verdict: 'pass',
+          suggestedDeduction: 0,
+          evidence: [],
+          unsureReason: null,
+        },
+        {
+          constraintId: 'USE_RECURSION',
+          verdict: 'unsure',
+          suggestedDeduction: 0,
+          evidence: [],
+          unsureReason: 'model_unsure',
+        },
+      ],
+      [submissionId2]: [
+        {
+          constraintId: 'NO_STD_SORT',
+          verdict: 'violation',
+          suggestedDeduction: 3,
+          evidence: [{ line: violationLine, text: sortCall }],
+          unsureReason: null,
+        },
+        {
+          constraintId: 'USE_RECURSION',
+          verdict: 'unsure',
+          suggestedDeduction: 0,
+          evidence: [],
+          unsureReason: 'model_unsure',
+        },
+      ],
+      [submissionId3]: [
+        {
+          constraintId: 'NO_STD_SORT',
+          verdict: 'pass',
+          suggestedDeduction: 0,
+          evidence: [],
+          unsureReason: null,
+        },
+        {
+          constraintId: 'USE_RECURSION',
+          verdict: 'unsure',
+          suggestedDeduction: 0,
+          evidence: [],
+          unsureReason: 'model_unsure',
+        },
+      ],
+    };
+
+    for (const [submissionId] of [
       [submissionId1, cleanCode],
       [submissionId2, violationCode],
       [submissionId3, injectionCode],
     ]) {
+      const expected = expectedVerdicts[submissionId];
       expect(
         items.filter((item) => item.submissionId === submissionId)
       ).toEqual(
@@ -194,11 +258,10 @@ describe('Full Pipeline — Criterion 1 Scenario', () => {
           studentAnonymousId: 'std-100',
           constraintId: constraint.id,
           constraintDescription: constraint.description,
-          verdict: index === 0 ? 'violation' : 'pass',
-          suggestedDeduction: index === 0 ? constraint.deduction : 0,
-          evidence:
-            index === 0 ? [{ line: 1, text: sourceCode.split('\n')[0] }] : [],
-          unsureReason: null,
+          verdict: expected[index].verdict,
+          suggestedDeduction: expected[index].suggestedDeduction,
+          evidence: expected[index].evidence,
+          unsureReason: expected[index].unsureReason,
           status: 'pending',
           reviewedBy: null,
           reviewedAt: null,
