@@ -27,6 +27,17 @@ export const GEMINI_15_FLASH_PRICING: ModelPricing = {
 };
 
 /**
+ * Standard baseline pricing for DeepSeek V4.1 Flash.
+ * Prompt tokens: $0.14 per 1,000,000 tokens
+ * Completion tokens: $0.28 per 1,000,000 tokens
+ */
+export const DEEPSEEK_V4_FLASH_PRICING: ModelPricing = {
+  modelName: 'deepseek-ai/deepseek-v4.1-flash-1017',
+  costPerMillionPromptTokens: 0.14,
+  costPerMillionCompletionTokens: 0.28,
+};
+
+/**
  * Resolves model pricing dynamically from environment variables,
  * falling back to GEMINI_15_FLASH_PRICING defaults if not specified.
  */
