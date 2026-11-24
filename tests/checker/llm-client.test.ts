@@ -4,10 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendCallLog,
   calculateLabCost,
+  DEEPSEEK_V4_FLASH_PRICING,
   GEMINI_15_FLASH_PRICING,
   readCallLog,
 } from '../../src/checker/call-logger.js';
-import { evaluateSemanticWithLlm } from '../../src/checker/llm-client.js';
+import {
+  callDeployApi,
+  evaluateSemanticWithLlm,
+} from '../../src/checker/llm-client.js';
 import type { ConstraintDefinition } from '../../src/types/constraint.types.js';
 
 describe('LLM Client & Call Logger (Criterion 4 — 20 points)', () => {
@@ -229,6 +233,125 @@ describe('LLM Client & Call Logger (Criterion 4 — 20 points)', () => {
           delete process.env.MODEL_OFF;
         }
       }
+    });
+  });
+
+  describe('4. Deploy API Provider (OpenAI-compatible DeepSeek)', () => {
+    const originalFetch = globalThis.fetch;
+    const originalApiKey = process.env.DEPLOY_API_KEY;
+    const originalProvider = process.env.MODEL_PROVIDER;
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      if (originalApiKey !== undefined) {
+        process.env.DEPLOY_API_KEY = originalApiKey;
+      } else {
+        delete process.env.DEPLOY_API_KEY;
+      }
+      if (originalProvider !== undefined) {
+        process.env.MODEL_PROVIDER = originalProvider;
+      } else {
+        delete process.env.MODEL_PROVIDER;
+      }
+    });
+
+    it('should format request with Bearer auth, model, and extract response metrics accurately', async () => {
+      process.env.DEPLOY_API_KEY = 'test-deploy-key-123';
+
+      let capturedUrl = '';
+      let capturedInit: RequestInit | undefined;
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url, init) => {
+        capturedUrl = String(url);
+        capturedInit = init;
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({
+            'x-request-id': 'custom-req-id-001',
+          }),
+          json: async () => ({
+            id: 'deploy-resp-999',
+            model: 'deepseek-ai/deepseek-v4.1-flash-1017',
+            choices: [
+              {
+                message: {
+                  role: 'assistant',
+                  content: JSON.stringify({
+                    verdicts: [
+                      {
+                        constraintId: 'C_MERGE_SORT',
+                        verdict: 'pass',
+                        evidence: [],
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+            usage: {
+              prompt_tokens: 350,
+              completion_tokens: 45,
+              total_tokens: 395,
+            },
+          }),
+        } as unknown as Response;
+      });
+
+      const result = await callDeployApi(
+        'Test prompt',
+        'deepseek-ai/deepseek-v4.1-flash-1017'
+      );
+
+      expect(capturedUrl).toBe(
+        'https://api-cdn.deploy.com/api/v1/chat/completions'
+      );
+      expect(capturedInit?.method).toBe('POST');
+      expect(
+        (capturedInit?.headers as Record<string, string>)['Authorization']
+      ).toBe('Bearer test-deploy-key-123');
+      expect(
+        (capturedInit?.headers as Record<string, string>)['Content-Type']
+      ).toBe('application/json');
+
+      const parsedBody = JSON.parse(String(capturedInit?.body));
+      expect(parsedBody.model).toBe('deepseek-ai/deepseek-v4.1-flash-1017');
+      expect(parsedBody.messages[0]).toEqual({
+        role: 'user',
+        content: 'Test prompt',
+      });
+      expect(parsedBody.response_format).toEqual({ type: 'json_object' });
+
+      expect(result.requestId).toBe('deploy-resp-999');
+      expect(result.promptTokens).toBe(350);
+      expect(result.completionTokens).toBe(45);
+      expect(result.rawOutput).toContain('C_MERGE_SORT');
+    });
+
+    it('should throw an error when DEPLOY_API_KEY is not configured', async () => {
+      delete process.env.DEPLOY_API_KEY;
+
+      await expect(
+        callDeployApi('Test prompt', 'deepseek-ai/deepseek-v4.1-flash-1017')
+      ).rejects.toThrow('DEPLOY_API_KEY is not configured');
+    });
+
+    it('should calculate cost accurately for DeepSeek model pricing', () => {
+      const costResult = calculateLabCost({
+        submissionsCount: 80,
+        avgPromptTokens: 1000,
+        avgCompletionTokens: 100,
+        pricing: DEEPSEEK_V4_FLASH_PRICING,
+      });
+
+      expect(costResult.totalSubmissions).toBe(80);
+      expect(costResult.totalPromptTokens).toBe(80000);
+      expect(costResult.totalCompletionTokens).toBe(8000);
+      // (80000 / 1e6) * 0.14 = $0.0112; (8000 / 1e6) * 0.28 = $0.00224; total = $0.01344
+      expect(costResult.totalCostUsd).toBeCloseTo(0.01344, 4);
+      expect(costResult.arithmetic).toContain(
+        'deepseek-ai/deepseek-v4.1-flash-1017'
+      );
     });
   });
 });

@@ -49,6 +49,109 @@ export interface EvaluateSemanticParams {
 }
 
 /**
+ * Native REST call to Deploy API (OpenAI-compatible chat completions).
+ * Supports DeepSeek and other models proxied via api-cdn.deploy.com.
+ */
+export async function callDeployApi(
+  prompt: string,
+  model: string = process.env.MODEL_NAME ||
+    'deepseek-ai/deepseek-v4.1-flash-1017',
+  apiKey?: string
+): Promise<ProviderCallResult> {
+  const key = apiKey || process.env.DEPLOY_API_KEY;
+  if (!key) {
+    throw new Error(
+      'DEPLOY_API_KEY is not configured in environment variables or parameters.'
+    );
+  }
+
+  const endpoint =
+    process.env.DEPLOY_API_URL ||
+    'https://api-cdn.deploy.com/api/v1/chat/completions';
+  const maxRetries = 2;
+  let attempt = 0;
+  let response!: Response;
+  let latencyMs = 0;
+
+  while (attempt <= maxRetries) {
+    const startTime = Date.now();
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    latencyMs = Date.now() - startTime;
+    if (
+      (response.status === 503 || response.status === 429) &&
+      attempt < maxRetries
+    ) {
+      attempt++;
+      const baseDelay = 3500 * Math.pow(2, attempt - 1);
+      const jitter = Math.floor(Math.random() * 800);
+      const waitTimeMs = baseDelay + jitter;
+      if (process.env.NODE_ENV !== 'test') {
+        console.log(
+          `[LLM Client] Máy chủ tạm bận (${response.status}), tự động chờ ${(waitTimeMs / 1000).toFixed(1)}s rồi thử lại (lượt ${attempt}/${maxRetries})...`
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, waitTimeMs));
+      continue;
+    }
+    break;
+  }
+
+  const requestId =
+    response.headers.get('x-request-id') ||
+    response.headers.get('request-id') ||
+    `deploy-${randomUUID()}`;
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(
+      `Deploy API error (status ${response.status}): ${errorBody}`
+    );
+  }
+
+  const data = (await response.json()) as {
+    id?: string;
+    choices?: Array<{
+      message?: {
+        content?: string | null;
+        reasoning_content?: string | null;
+      };
+    }>;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    };
+  };
+
+  const message = data.choices?.[0]?.message;
+  const rawOutput =
+    message?.content || message?.reasoning_content || '{"verdicts": []}';
+  const promptTokens = data.usage?.prompt_tokens || 0;
+  const completionTokens = data.usage?.completion_tokens || 0;
+  const finalRequestId = data.id || requestId;
+
+  return {
+    requestId: finalRequestId,
+    rawOutput,
+    promptTokens,
+    completionTokens,
+    latencyMs,
+  };
+}
+
+/**
  * Native REST call to Google Gemini Generative Language API.
  * Uses built-in Node 20 fetch without heavy third-party SDK dependencies.
  */
@@ -162,11 +265,19 @@ export async function callGeminiApi(
 export async function evaluateSemanticWithLlm(
   params: EvaluateSemanticParams
 ): Promise<ConstraintVerdict[]> {
+  const isDeployProvider =
+    process.env.MODEL_PROVIDER === 'deploy' ||
+    Boolean(process.env.DEPLOY_API_KEY);
+
+  const defaultModel = isDeployProvider
+    ? 'deepseek-ai/deepseek-v4.1-flash-1017'
+    : 'gemini-1.5-flash';
+
   const {
     statement,
     constraints,
     sourceCode,
-    model = process.env.MODEL_NAME || 'gemini-1.5-flash',
+    model = process.env.MODEL_NAME || defaultModel,
     apiKey,
     callProvider,
     logFilePath = DEFAULT_CALL_LOG_PATH,
@@ -202,7 +313,17 @@ export async function evaluateSemanticWithLlm(
     sourceCode,
   });
 
-  const providerFn = callProvider || ((p, m) => callGeminiApi(p, m, apiKey));
+  const providerFn =
+    callProvider ||
+    ((p, m) => {
+      const provider =
+        process.env.MODEL_PROVIDER ||
+        (process.env.DEPLOY_API_KEY ? 'deploy' : 'gemini');
+      if (provider === 'deploy') {
+        return callDeployApi(p, m, apiKey);
+      }
+      return callGeminiApi(p, m, apiKey);
+    });
 
   let providerResult: ProviderCallResult;
   try {

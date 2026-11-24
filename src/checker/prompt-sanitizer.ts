@@ -187,10 +187,10 @@ ${numberedCode}
 \`\`\`
 
 ### EVALUATION INSTRUCTIONS & GUARDRAIL RULES
-1. Evaluate each constraint independently.
+1. Evaluate each constraint independently. Focus strictly on whether the code adheres to the requested structural or algorithmic paradigm (e.g., recursive divide-and-conquer structure), not on algorithmic correctness or test-case bugs which are tested by unit test suites. If the code exhibits the required recursive divide-and-conquer structure and merge logic, return "pass".
 2. For each constraint, return ONE of three verdicts:
-   - "pass": The student fully complies with the constraint.
-   - "violation": The student violates the constraint. You MUST provide exact evidence lines that prove the violation.
+   - "pass": The student complies with the constraint paradigm.
+   - "violation": The student clearly violates the constraint (e.g., uses iteration or a completely different algorithm like bubble sort instead of recursion). You MUST provide exact evidence lines that prove the violation.
    - "unsure": You are uncertain, the code is ambiguous, or there is conflicting evidence.
 3. Every evidence item MUST contain:
    - "line": The exact 1-based line number from the numbered code above.

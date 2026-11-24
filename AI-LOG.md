@@ -319,3 +319,12 @@ Kept: Real API auditing to `call_log.jsonl`, schema validation, timeout guard, a
 Changed: In `src/checker/cli.ts`, imported `dotenv/config` and inserted a 2000ms delay between consecutive submissions to strictly conform to Google Free Tier 15 RPM limits. In `src/checker/llm-client.ts`, added `x-goog-api-key` header for new `AQ.` Auth keys, implemented exponential backoff retry (3.5s -> 7.0s with jitter) on 503/429 status codes, increased timeout to 30s, and normalized model names. Updated `custom-cases/labels.jsonl` with full function body lines `[7, 8, 9, 10, 11]` for `s05.cpp`.
 Rejected: Calling Gemini API without delay, which triggers 429 rate limit bursts; rejected short 1.5s retries that fail during sustained GPU capacity spikes.
 By hand: Verified live API execution using `gemini-3.5-flash-lite`: `eval.mjs` achieved 100% Recall (3/3), 0 wrongful deductions, 10.0% unsure rate (PASS). Confirmed real entries generated in `call_log.jsonl`.
+
+
+## 2026-11-24 — integrate Deploy API with OpenAI-compatible DeepSeek chat completions (Criterion 4, 6)
+Tool: Antigravity (Gemini 3.8 Flash)
+Asked for: Switch LLM API provider to Deploy API endpoint (`https://api-cdn.deploy.com/api/v1/chat/completions`) using `DEPLOY_API_KEY` (`VnaawNiB/D8NSB0753eFBg==`) with model `deepseek-ai/deepseek-v4.1-flash-1017`.
+Kept: Existing prompt sanitization, JSON schema extraction, evidence verification guardrails, and call logging infrastructure (`call_log.jsonl`).
+Changed: Implemented `callDeployApi` in `src/checker/llm-client.ts` targeting `https://api-cdn.deploy.com/api/v1/chat/completions` with Bearer auth, OpenAI format `{ model, messages, response_format }`, retry backoff on 503/429, and metric extraction (`requestId`, tokens, latency). Updated `evaluateSemanticWithLlm` to dispatch to `callDeployApi` when `MODEL_PROVIDER=deploy` or `DEPLOY_API_KEY` is set. Added `DEEPSEEK_V4_FLASH_PRICING` in `src/checker/call-logger.ts`. Updated `.env` and `.env.example`. Clarified paradigm adherence instructions in `src/checker/prompt-sanitizer.ts`. Added 3 unit tests in `tests/checker/llm-client.test.ts`.
+Rejected: Hardcoding credentials or endpoint URLs into source files; maintained clean environment variable overrides (`DEPLOY_API_URL`, `DEPLOY_API_KEY`, `MODEL_NAME`).
+By hand: Executed live end-to-end evaluation using `eval.mjs` against `custom-cases`: achieved 0 wrongful deductions, 100.0% recall (3/3), and 0.0% unsure rate (PASS). Confirmed 146/146 unit tests passing.
