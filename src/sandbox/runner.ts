@@ -3,7 +3,7 @@
  * CSC13114 - LeeTKOB PA#3 (Criterion 2)
  */
 
-import { execSync, spawn } from 'child_process';
+import { type ChildProcess, execSync, spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import type {
   ExecutionStatus,
@@ -25,6 +25,32 @@ export const DEFAULT_SANDBOX_LIMITS: SandboxLimits = {
   outputLimitKb: 64,
   pidsLimit: 64,
 };
+
+const COMPILE_TIMEOUT_MS = 15000;
+const CONTAINER_START_TIMEOUT_MS = 10000;
+
+/**
+ * Compare actual stdout against expected output token-by-token (whitespace-separated).
+ */
+export function compareTokens(actual: string, expected: string): boolean {
+  const actualTrimmed = actual.trim();
+  const expectedTrimmed = expected.trim();
+  const actualTokens = actualTrimmed === '' ? [] : actualTrimmed.split(/\s+/);
+  const expectedTokens =
+    expectedTrimmed === '' ? [] : expectedTrimmed.split(/\s+/);
+
+  if (actualTokens.length !== expectedTokens.length) {
+    return false;
+  }
+
+  for (let i = 0; i < actualTokens.length; i++) {
+    if (actualTokens[i] !== expectedTokens[i]) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 /**
  * Check if Docker daemon is running and accessible
@@ -52,36 +78,64 @@ export async function runSandboxCode(
   };
 
   if (!isDockerAvailable()) {
-    return simulateSandboxExecution(sourceCode, limits, testCases);
+    return {
+      compileSuccess: false,
+      compileOutput:
+        'Docker daemon is not available. Sandbox execution requires Docker.',
+      status: 'RUNTIME_ERROR',
+      passedTests: 0,
+      totalTests: testCases.length,
+      cpuTimeMs: 0,
+      memoryKb: 0,
+      stdout: '',
+      stderr: 'Docker daemon is not available.',
+    };
   }
 
   return executeInDockerSandbox(sourceCode, limits, testCases);
 }
 
-/**
- * Real Docker Sandbox Execution
- */
-async function executeInDockerSandbox(
-  sourceCode: string,
-  limits: SandboxLimits,
-  testCases: TestCase[]
-): Promise<SandboxExecutionResult> {
-  const containerName = `leetkob-sandbox-${randomUUID().slice(0, 8)}`;
-  const dockerImage =
-    process.env.SANDBOX_DOCKER_IMAGE || 'leetkob-sandbox:latest';
-  const base64Code = Buffer.from(sourceCode).toString('base64');
-  const cpuSec = Math.max(1, Math.ceil(limits.cpuTimeLimitMs / 1000));
-  const maxOutputBytes = limits.outputLimitKb * 1024;
+function killSandboxContainer(
+  containerName: string,
+  child?: ChildProcess
+): void {
+  try {
+    execSync(`docker kill ${containerName}`, {
+      stdio: 'ignore',
+      timeout: 2000, // Timeout prevents execSync from blocking Node event loop
+    });
+  } catch {
+    // Container may have already terminated
+  }
 
-  const compileAndRunCmd = [
-    `echo "${base64Code}" | base64 -d > /sandbox/solution.cpp`,
-    `g++ -O2 /sandbox/solution.cpp -o /sandbox/solution`,
-    `ulimit -t ${cpuSec}`,
-    `/sandbox/solution`,
-  ].join(' && ');
+  if (child) {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // Child process may have already exited
+    }
+  }
+}
 
+function removeSandboxContainer(containerName: string): void {
+  try {
+    execSync(`docker rm -f ${containerName}`, {
+      stdio: 'ignore',
+      timeout: 3000,
+    });
+  } catch {
+    // Container may have already been removed via --rm
+  }
+}
+
+function startSandboxContainer(
+  containerName: string,
+  dockerImage: string,
+  limits: SandboxLimits
+): Promise<void> {
   const dockerArgs = [
     'run',
+    '-d',
     '--rm',
     '--init', // PID 1 reaper for clean process termination (prevents fork bomb hang)
     '--name',
@@ -104,12 +158,140 @@ async function executeInDockerSandbox(
     '--tmpfs',
     '/sandbox:rw,exec,nosuid,size=64m,uid=1000,gid=1000,mode=1777',
     dockerImage,
-    '/bin/bash',
-    '-c',
-    compileAndRunCmd,
+    'sleep',
+    '120',
   ];
 
-  return new Promise<SandboxExecutionResult>((resolve) => {
+  return new Promise((resolve, reject) => {
+    let stderr = '';
+    const child = spawn('docker', dockerArgs, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+      reject(new Error('Timed out starting sandbox container'));
+    }, CONTAINER_START_TIMEOUT_MS);
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(
+          new Error(
+            `Failed to start sandbox container (code ${code}): ${stderr}`
+          )
+        );
+      }
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+function compileInContainer(
+  containerName: string,
+  sourceCode: string
+): Promise<{
+  success: boolean;
+  output: string;
+  stdout: string;
+  stderr: string;
+}> {
+  const compileCmd =
+    'cat > /sandbox/solution.cpp && g++ -std=c++17 -O2 /sandbox/solution.cpp -o /sandbox/solution';
+
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
+
+    const child = spawn(
+      'docker',
+      ['exec', '-i', containerName, '/bin/bash', '-c', compileCmd],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+
+    const timer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      killSandboxContainer(containerName, child);
+      resolve({
+        success: false,
+        output: 'Compilation timed out',
+        stdout,
+        stderr: stderr || 'Compilation timed out',
+      });
+    }, COMPILE_TIMEOUT_MS);
+
+    child.stdin?.on('error', () => {
+      // Ignore EPIPE if process exits early
+    });
+    child.stdin?.write(sourceCode);
+    child.stdin?.end();
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('close', (code) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      const output = (stderr || stdout).trim();
+      resolve({
+        success: code === 0,
+        output,
+        stdout,
+        stderr,
+      });
+    });
+
+    child.on('error', (err) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      resolve({
+        success: false,
+        output: err.message,
+        stdout,
+        stderr: err.message,
+      });
+    });
+  });
+}
+
+function runSingleTestInContainer(
+  containerName: string,
+  limits: SandboxLimits,
+  input: string
+): Promise<{
+  status: ExecutionStatus;
+  stdout: string;
+  stderr: string;
+  executionTimeMs: number;
+}> {
+  const cpuSec = Math.max(1, Math.ceil(limits.cpuTimeLimitMs / 1000));
+  const maxOutputBytes = limits.outputLimitKb * 1024;
+  const runCmd = `ulimit -t ${cpuSec} && exec /sandbox/solution`;
+
+  return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let wallTimeExceeded = false;
@@ -117,60 +299,55 @@ async function executeInDockerSandbox(
     let isTerminated = false;
     let resolved = false;
 
+    const child = spawn(
+      'docker',
+      ['exec', '-i', containerName, '/bin/bash', '-c', runCmd],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+
+    // Wall-clock timer starts ONLY when the compiled binary execution starts
     const startTime = Date.now();
-    const child = spawn('docker', dockerArgs, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
 
-    // Explicitly close stdin to prevent Docker/bash from hanging on unclosed input pipe
-    child.stdin?.end();
-
-    const killContainer = () => {
+    const terminateContainer = () => {
       if (isTerminated) return;
       isTerminated = true;
-
-      try {
-        execSync(`docker kill ${containerName}`, {
-          stdio: 'ignore',
-          timeout: 2000, // Timeout prevents execSync from blocking Node event loop
-        });
-      } catch {
-        // Container may have already terminated
-      }
-
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // Child process may have already exited
-      }
+      killSandboxContainer(containerName, child);
     };
 
-    // Wall-clock kill timer (kills the entire container, not only process)
     const wallClockTimer = setTimeout(() => {
       wallTimeExceeded = true;
-      killContainer();
+      terminateContainer();
     }, limits.wallClockLimitMs);
 
-    // Absolute failsafe timer to guarantee Promise resolution
     const failsafeTimer = setTimeout(() => {
       if (!resolved) {
-        killContainer();
+        terminateContainer();
         finalize(128 + 9);
       }
     }, limits.wallClockLimitMs + 5000);
+
+    child.stdin?.on('error', () => {
+      // Ignore EPIPE if process exits before reading all input
+    });
+    if (input.length > 0) {
+      child.stdin?.write(input);
+    }
+    child.stdin?.end();
 
     child.stdout?.on('data', (chunk: Buffer) => {
       if (stdout.length + chunk.length > maxOutputBytes) {
         outputLimitExceeded = true;
         child.stdout?.destroy();
-        killContainer();
+        terminateContainer();
       } else {
         stdout += chunk.toString();
       }
     });
 
     child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+      if (stderr.length + chunk.length <= maxOutputBytes) {
+        stderr += chunk.toString();
+      }
     });
 
     const finalize = (code: number | null) => {
@@ -180,7 +357,7 @@ async function executeInDockerSandbox(
       clearTimeout(wallClockTimer);
       clearTimeout(failsafeTimer);
 
-      const executionTime = Date.now() - startTime;
+      const executionTimeMs = Date.now() - startTime;
       let status: ExecutionStatus = 'ACCEPTED';
 
       const isCpuTimeExceeded =
@@ -189,7 +366,7 @@ async function executeInDockerSandbox(
         stderr.includes('CPU time limit') ||
         stderr.includes('time limit') ||
         ((code === 137 || stderr.includes('Killed')) &&
-          executionTime >= limits.cpuTimeLimitMs * 0.8);
+          executionTimeMs >= limits.cpuTimeLimitMs * 0.8);
 
       const isMemoryLimitExceeded =
         stderr.includes('bad_alloc') ||
@@ -206,28 +383,11 @@ async function executeInDockerSandbox(
         status = 'RUNTIME_ERROR';
       }
 
-      // Check test case match if tests are given
-      if (testCases.length > 0 && status === 'ACCEPTED') {
-        const expected = testCases[0].expectedOutput.trim();
-        const actual = stdout.trim();
-        if (expected.length > 0 && actual !== expected) {
-          status = 'WRONG_ANSWER';
-        }
-      }
-
-      const totalTests = testCases.length;
-      const passedTests = status === 'ACCEPTED' ? totalTests : 0;
-
       resolve({
-        compileSuccess: true,
-        compileOutput: '',
         status,
-        passedTests,
-        totalTests,
-        cpuTimeMs: executionTime,
-        memoryKb: limits.memoryLimitMb * 1024,
         stdout,
         stderr,
+        executionTimeMs,
       });
     };
 
@@ -240,82 +400,119 @@ async function executeInDockerSandbox(
       clearTimeout(failsafeTimer);
 
       resolve({
-        compileSuccess: false,
-        compileOutput: err.message,
         status: 'RUNTIME_ERROR',
-        passedTests: 0,
-        totalTests: testCases.length,
-        cpuTimeMs: 0,
-        memoryKb: 0,
-        stdout: '',
+        stdout,
         stderr: err.message,
+        executionTimeMs: Date.now() - startTime,
       });
     });
   });
 }
 
 /**
- * Local Simulator Fallback (Ensures development sanity when Docker daemon is not active)
+ * Real Docker Sandbox Execution
  */
-function simulateSandboxExecution(
+async function executeInDockerSandbox(
   sourceCode: string,
   limits: SandboxLimits,
   testCases: TestCase[]
-): SandboxExecutionResult {
-  let status: ExecutionStatus = 'ACCEPTED';
-  const stdout = '';
-  const stderr = '';
+): Promise<SandboxExecutionResult> {
+  const containerName = `leetkob-sandbox-${randomUUID().slice(0, 8)}`;
+  const dockerImage =
+    process.env.SANDBOX_DOCKER_IMAGE || 'leetkob-sandbox:latest';
 
-  if (
-    sourceCode.includes('volatile unsigned long long counter') ||
-    sourceCode.includes('02_cpu_limit')
-  ) {
-    status = 'TIME_LIMIT_EXCEEDED';
-  } else if (
-    sourceCode.includes('sleep_for') ||
-    sourceCode.includes('03_wall_time')
-  ) {
-    status = 'TIME_LIMIT_EXCEEDED';
-  } else if (
-    sourceCode.includes('1024ULL * 1024ULL * 1024ULL') ||
-    sourceCode.includes('04_memory_limit')
-  ) {
-    status = 'MEMORY_LIMIT_EXCEEDED';
-  } else if (
-    sourceCode.includes('Spamming stdout with a lot of junk data') ||
-    sourceCode.includes('06_output_limit')
-  ) {
-    status = 'OUTPUT_LIMIT_EXCEEDED';
-  } else if (
-    sourceCode.includes('fork()') ||
-    sourceCode.includes('05_process_limit')
-  ) {
-    status = 'RUNTIME_ERROR';
-  } else if (
-    sourceCode.includes('01_no_network') ||
-    sourceCode.includes('socket(AF_INET')
-  ) {
-    status = 'RUNTIME_ERROR';
-  } else if (
-    sourceCode.includes('07_non_root') ||
-    sourceCode.includes('08_no_docker_socket') ||
-    sourceCode.includes('09_no_secrets')
-  ) {
-    status = 'RUNTIME_ERROR';
+  try {
+    await startSandboxContainer(containerName, dockerImage, limits);
+
+    const compileResult = await compileInContainer(containerName, sourceCode);
+    if (!compileResult.success) {
+      return {
+        compileSuccess: false,
+        compileOutput: compileResult.output,
+        status: 'RUNTIME_ERROR',
+        passedTests: 0,
+        totalTests: testCases.length,
+        cpuTimeMs: 0,
+        memoryKb: 0,
+        stdout: compileResult.stdout,
+        stderr: compileResult.stderr,
+      };
+    }
+
+    const totalTests = testCases.length;
+    if (totalTests === 0) {
+      const singleRun = await runSingleTestInContainer(
+        containerName,
+        limits,
+        ''
+      );
+      return {
+        compileSuccess: true,
+        compileOutput: compileResult.output,
+        status: singleRun.status,
+        passedTests: 0,
+        totalTests: 0,
+        cpuTimeMs: singleRun.executionTimeMs,
+        memoryKb: limits.memoryLimitMb * 1024,
+        stdout: singleRun.stdout,
+        stderr: singleRun.stderr,
+      };
+    }
+
+    let passedTests = 0;
+    let overallStatus: ExecutionStatus = 'ACCEPTED';
+    let maxCpuTimeMs = 0;
+    let lastStdout = '';
+    let lastStderr = '';
+
+    for (const testCase of testCases) {
+      const runResult = await runSingleTestInContainer(
+        containerName,
+        limits,
+        testCase.input
+      );
+
+      maxCpuTimeMs = Math.max(maxCpuTimeMs, runResult.executionTimeMs);
+      lastStdout = runResult.stdout;
+      lastStderr = runResult.stderr;
+
+      if (runResult.status !== 'ACCEPTED') {
+        overallStatus = runResult.status;
+        break;
+      }
+
+      if (compareTokens(runResult.stdout, testCase.expectedOutput)) {
+        passedTests++;
+      } else if (overallStatus === 'ACCEPTED') {
+        overallStatus = 'WRONG_ANSWER';
+      }
+    }
+
+    return {
+      compileSuccess: true,
+      compileOutput: compileResult.output,
+      status: overallStatus,
+      passedTests,
+      totalTests,
+      cpuTimeMs: maxCpuTimeMs,
+      memoryKb: limits.memoryLimitMb * 1024,
+      stdout: lastStdout,
+      stderr: lastStderr,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      compileSuccess: false,
+      compileOutput: message,
+      status: 'RUNTIME_ERROR',
+      passedTests: 0,
+      totalTests: testCases.length,
+      cpuTimeMs: 0,
+      memoryKb: 0,
+      stdout: '',
+      stderr: message,
+    };
+  } finally {
+    removeSandboxContainer(containerName);
   }
-
-  const totalTests = testCases.length;
-  const passedTests = status === 'ACCEPTED' ? totalTests : 0;
-
-  return {
-    compileSuccess: true,
-    compileOutput: '',
-    status,
-    passedTests,
-    totalTests,
-    cpuTimeMs: 15,
-    memoryKb: 4096,
-    stdout,
-    stderr,
-  };
 }

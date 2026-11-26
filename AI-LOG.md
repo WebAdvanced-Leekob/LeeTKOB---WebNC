@@ -328,3 +328,39 @@ Kept: Existing prompt sanitization, JSON schema extraction, evidence verificatio
 Changed: Implemented `callDeployApi` in `src/checker/llm-client.ts` targeting `https://api-cdn.deploy.com/api/v1/chat/completions` with Bearer auth, OpenAI format `{ model, messages, response_format }`, retry backoff on 503/429, and metric extraction (`requestId`, tokens, latency). Updated `evaluateSemanticWithLlm` to dispatch to `callDeployApi` when `MODEL_PROVIDER=deploy` or `DEPLOY_API_KEY` is set. Added `DEEPSEEK_V4_FLASH_PRICING` in `src/checker/call-logger.ts`. Updated `.env` and `.env.example`. Clarified paradigm adherence instructions in `src/checker/prompt-sanitizer.ts`. Added 3 unit tests in `tests/checker/llm-client.test.ts`.
 Rejected: Hardcoding credentials or endpoint URLs into source files; maintained clean environment variable overrides (`DEPLOY_API_URL`, `DEPLOY_API_KEY`, `MODEL_NAME`).
 By hand: Executed live end-to-end evaluation using `eval.mjs` against `custom-cases`: achieved 0 wrongful deductions, 100.0% recall (3/3), and 0.0% unsure rate (PASS). Confirmed 146/146 unit tests passing.
+
+
+## 2026-11-26 — fix sandbox runner stdin, multi-test token grading, C++17 compile separation, and wall-clock timer (A1)
+Tool: Antigravity (Gemini 4 Hydrogen)
+Asked for: Fix 4 gaps in `src/sandbox/runner.ts`: pass `testCase.input` to stdin instead of closing immediately, loop through all test cases with token-by-token comparison (`passedTests` / `totalTests`), separate compilation with `-std=c++17` returning real `compileSuccess` and `compileOutput`, and start `wallClockTimer` only during compiled binary execution rather than including container startup and compilation.
+Kept: All 9 Docker security flags (`--network none`, `--cpus 1.0`, `--memory`, `--memory-swap`, `--pids-limit`, `--user 1000:1000`, `--read-only`, `--tmpfs`), `ulimit -t`, output limit enforcement, and simulator fallback.
+Changed: Refactored `executeInDockerSandbox` in `src/sandbox/runner.ts` into container start (`docker run -d`), dedicated C++17 compilation (`compileInContainer` using `g++ -std=c++17 -O2`), per-testcase execution (`runSingleTestInContainer` piping `testCase.input` to stdin with isolated `wallClockTimer`), and guaranteed cleanup (`removeSandboxContainer`). Exported `compareTokens` for whitespace-normalized token matching. Added 6 unit tests in `tests/sandbox/runner-grading.test.ts`.
+Rejected: Merging compile and multi-test runs into a single `bash -c` invocation, which conflates compile errors with runtime errors and includes startup/compile latency in `wallClockLimitMs`.
+By hand: Verified `format:fix`, `typecheck`, `lint`, and full test suite (22 files, 152/152 tests passing).
+
+
+## 2026-11-26 — decouple judge worker process and add cross-process persistent queue and DataStore (A2)
+Tool: Antigravity (Gemini 4 Hydrogen)
+Asked for: Decouple `JudgeWorker` from `src/server.ts` into a standalone process (`src/worker.ts`) and back `SubmissionQueue` and `DataStore` with shared cross-process persistence so the worker can be stopped and restarted independently while preserving queued jobs and results.
+Kept: All existing API routes, idempotency semantics (`submissionId` primary key), test-mode in-memory isolation when no store path is configured, and graceful `SIGINT`/`SIGTERM` shutdown.
+Changed: Added atomic lock-guarded JSON file persistence (`src/store/json-file-store.ts`) with `QUEUE_STORE_PATH` / `DATA_STORE_PATH` support (auto-enabled outside Vitest in `.leetkob-data/`). Updated `SubmissionQueue` (`src/queue/submission-queue.ts`) and `DataStore` (`src/store/data-store.ts`) to share state across processes via `JsonFileStore`. Moved worker polling out of `src/server.ts` into standalone `src/worker.ts` and added `worker` / `start:worker` scripts in `package.json`. Updated `tests/server.test.ts` and added real multi-process integration test `tests/queue/cross-process.test.ts`.
+Rejected: Keeping inline `setInterval` worker polling inside `src/server.ts` or relying solely on process-local `Map` state, which prevents independent worker restarts.
+By hand: Verified `format:fix`, `typecheck`, `lint`, and full test suite (23 files, 155/155 tests passing including cross-process OS spawn test).
+
+
+## 2026-11-26 — remove fake sandbox simulator fallback and strengthen 9 security minimum assertions (A3)
+Tool: Antigravity (Gemini 4 Hydrogen)
+Asked for: Remove the string-matching `simulateSandboxExecution` fallback from `src/sandbox/runner.ts` so missing Docker fails closed (`compileSuccess: false`), and harden tests 7–9 in `tests/sandbox/runner.test.ts` so empty stdout or compile errors cannot pass falsely.
+Kept: CI workflow (`ci.yml`) building `docker/Dockerfile.sandbox` on `pa*` tags and running `npm run test` against real Docker.
+Changed: Removed `simulateSandboxExecution` from `src/sandbox/runner.ts` and returned fail-closed `compileSuccess: false, status: 'RUNTIME_ERROR'` when Docker is unavailable. Added `SAFE_NON_ROOT`, `SAFE_NO_DOCKER_SOCKET`, and `SAFE_NO_SECRETS` markers to `07_non_root.cpp`, `08_no_docker_socket.cpp`, and `09_no_secrets.cpp`. Updated `tests/sandbox/runner.test.ts` to assert `compileSuccess: true` on all 9 minimums, positive `SAFE_*` markers on tests 7–9, CI Docker enforcement (`CI === 'true'`), and honest `describe.skipIf(!dockerAvailable)` locally when Docker is stopped. Added fail-closed test in `tests/sandbox/runner-grading.test.ts`. Updated `idempotency.test.ts`, `full-pipeline.test.ts`, and `cross-process.test.ts` for local no-Docker compatibility without fake runner fallback.
+Rejected: Silently faking `compileSuccess: true` and `ACCEPTED` via substring matching when Docker daemon is unavailable.
+By hand: Verified `format:fix`, `typecheck`, `lint`, and `npm test` (23 files: 148 passed, 9 Docker-only security tests honestly skipped locally when Docker daemon is stopped).
+
+
+## 2026-11-26 — add leetkob-worker service and shared .leetkob-data volume in docker-compose.yml
+Tool: Antigravity (Gemini 4 Hydrogen)
+Asked for: Update `docker-compose.yml` to add the `leetkob-worker` service (`npm run start:worker`), mount a shared `.leetkob-data` volume between `leetkob-api` and `leetkob-worker`, and move `/var/run/docker.sock` from `leetkob-api` to `leetkob-worker`.
+Kept: `leetkob-sandbox` image build service, `leetkob-api` port mapping (`3000:3000`) and healthcheck, and non-root `USER node` execution in `Dockerfile`.
+Changed: Updated `docker-compose.yml` to add `leetkob-worker` (`command: ["npm", "run", "start:worker"]`, `/var/run/docker.sock` mount, `group_add`, `depends_on: leetkob-sandbox`), removed `/var/run/docker.sock` and `DOCKER_HOST` from `leetkob-api`, and added shared named volume `leetkob-data:/app/.leetkob-data` with explicit `QUEUE_STORE_PATH` and `DATA_STORE_PATH`. Updated `Dockerfile` to pre-create `/app/.leetkob-data` owned by `node:node` so the mounted volume is writable by the non-root `node` user.
+Rejected: Mounting Docker socket on the API container or storing queue/data separately inside container-local filesystems.
+By hand: Verified `npm run build` (`dist/server.js` and `dist/worker.js`) and `npm run format:check` pass.

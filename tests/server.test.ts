@@ -31,9 +31,25 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('Server worker lifecycle', () => {
+describe('Server & Standalone Worker lifecycle', () => {
   it.each(['SIGINT', 'SIGTERM'] as const)(
-    'starts polling and stops safely on %s while a job is active',
+    'server.ts runs API only without inline worker and closes safely on %s',
+    async (signal) => {
+      await import('../src/server.js');
+      expect(mocks.start).not.toHaveBeenCalled();
+      expect(mocks.processNext).not.toHaveBeenCalled();
+
+      const handler = process
+        .listeners(signal)
+        .find((listener) => !originalListeners[signal].includes(listener));
+      expect(handler).toBeDefined();
+      handler!(signal);
+      expect(mocks.close).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each(['SIGINT', 'SIGTERM'] as const)(
+    'worker.ts starts polling and stops safely on %s while a job is active',
     async (signal) => {
       vi.useFakeTimers();
       let finish!: (value: boolean) => void;
@@ -43,7 +59,7 @@ describe('Server worker lifecycle', () => {
             finish = resolve;
           })
       );
-      await import('../src/server.js');
+      await import('../src/worker.js');
       expect(mocks.start).toHaveBeenCalledOnce();
       await vi.advanceTimersByTimeAsync(1500);
       expect(mocks.processNext).toHaveBeenCalledOnce();
@@ -53,7 +69,6 @@ describe('Server worker lifecycle', () => {
       expect(handler).toBeDefined();
       handler!(signal);
       expect(mocks.stop).toHaveBeenCalledOnce();
-      expect(mocks.close).toHaveBeenCalledOnce();
       finish(true);
       await vi.advanceTimersByTimeAsync(1500);
       expect(mocks.processNext).toHaveBeenCalledOnce();

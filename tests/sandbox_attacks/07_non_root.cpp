@@ -15,5 +15,6 @@ int main() {
         return 0; // Vi phạm nếu ghi được vào /root
     }
 
+    std::cout << "SAFE_NON_ROOT" << std::endl;
     return 1;
 }

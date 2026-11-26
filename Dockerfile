@@ -16,6 +16,7 @@ RUN apk add --no-cache docker-cli
 COPY --from=build --chown=node:node /app/package.json ./
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
+RUN mkdir -p /app/.leetkob-data && chown node:node /app/.leetkob-data
 USER node
 EXPOSE 3000
 CMD ["node", "dist/server.js"]

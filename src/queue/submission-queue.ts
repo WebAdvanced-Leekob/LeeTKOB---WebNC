@@ -3,57 +3,111 @@
  * CSC13114 - LeeTKOB PA#3 (Criterion 2)
  */
 
+import {
+  readJsonFile,
+  resolveDefaultStorePath,
+  updateJsonFile,
+  withFileLock,
+  writeJsonAtomic,
+} from '../store/json-file-store.js';
 import type { SandboxExecutionResult, SubmissionJob } from '../types/index.js';
 
 export type SubmissionQueueStatus =
   'queued' | 'processing' | 'completed' | 'failed';
 
+interface QueueState {
+  queue: SubmissionJob[];
+  jobs: Record<string, SubmissionJob>;
+  statuses: Record<string, SubmissionQueueStatus>;
+  results: Record<string, SandboxExecutionResult[]>;
+}
+
+function createEmptyQueueState(): QueueState {
+  return {
+    queue: [],
+    jobs: {},
+    statuses: {},
+    results: {},
+  };
+}
+
 export class SubmissionQueue {
-  private queue: SubmissionJob[] = [];
-  private jobMap = new Map<string, SubmissionJob>();
-  private statusMap = new Map<string, SubmissionQueueStatus>();
-  private resultsMap = new Map<string, SandboxExecutionResult[]>();
+  private readonly storagePath: string | undefined;
+  private memoryState: QueueState = createEmptyQueueState();
+
+  constructor(storagePath?: string) {
+    this.storagePath =
+      storagePath ??
+      process.env.QUEUE_STORE_PATH ??
+      resolveDefaultStorePath('submission-queue.json');
+  }
+
+  private readState(): QueueState {
+    if (!this.storagePath) {
+      return this.memoryState;
+    }
+    return withFileLock(this.storagePath, () =>
+      readJsonFile(this.storagePath!, createEmptyQueueState)
+    );
+  }
+
+  private updateState<R>(
+    updater: (state: QueueState) => { result: R; changed: boolean }
+  ): R {
+    if (!this.storagePath) {
+      return updater(this.memoryState).result;
+    }
+    return updateJsonFile(this.storagePath, createEmptyQueueState, updater);
+  }
 
   /**
    * Enqueue a submission job for judging with unique primary key check
    */
   async enqueue(job: SubmissionJob): Promise<void> {
-    const existingStatus = this.statusMap.get(job.submissionId);
+    this.updateState((state) => {
+      const existingStatus = state.statuses[job.submissionId];
 
-    // If job is already completed or currently queued, do not duplicate
-    if (existingStatus === 'completed' || existingStatus === 'queued') {
-      return;
-    }
+      // If job is already completed or currently queued, do not duplicate
+      if (existingStatus === 'completed' || existingStatus === 'queued') {
+        return { result: undefined, changed: false };
+      }
 
-    this.jobMap.set(job.submissionId, job);
-    this.statusMap.set(job.submissionId, 'queued');
-    this.queue.push(job);
+      const snapshot = structuredClone(job);
+      state.jobs[job.submissionId] = snapshot;
+      state.statuses[job.submissionId] = 'queued';
+      state.queue.push(snapshot);
+      return { result: undefined, changed: true };
+    });
   }
 
   /**
    * Dequeue the next pending job in FIFO order
    */
   async dequeue(): Promise<SubmissionJob | null> {
-    const job = this.queue.shift();
-    if (job) {
-      this.statusMap.set(job.submissionId, 'processing');
-      return job;
-    }
-    return null;
+    return this.updateState((state) => {
+      const job = state.queue.shift();
+      if (!job) {
+        return { result: null, changed: false };
+      }
+      state.statuses[job.submissionId] = 'processing';
+      return { result: structuredClone(job), changed: true };
+    });
   }
 
   /**
    * Get submission job details by ID
    */
   async getJob(submissionId: string): Promise<SubmissionJob | null> {
-    return this.jobMap.get(submissionId) ?? null;
+    const state = this.readState();
+    return structuredClone(state.jobs[submissionId] ?? null);
   }
 
   /**
    * Get the current status of a submission
    */
   async getStatus(submissionId: string): Promise<SubmissionQueueStatus | null> {
-    return this.statusMap.get(submissionId) ?? null;
+    const state = this.readState();
+    return state.statuses[submissionId] ?? null;
   }
 
   /**
@@ -63,35 +117,46 @@ export class SubmissionQueue {
     submissionId: string,
     result: SandboxExecutionResult
   ): Promise<void> {
-    // Idempotency check: exactly one set of verdicts is stored
-    if (!this.resultsMap.has(submissionId)) {
-      this.resultsMap.set(submissionId, [result]);
-      this.statusMap.set(submissionId, 'completed');
-    }
+    this.updateState((state) => {
+      // Idempotency check: exactly one set of verdicts is stored
+      if (state.results[submissionId]) {
+        return { result: undefined, changed: false };
+      }
+      state.results[submissionId] = [structuredClone(result)];
+      state.statuses[submissionId] = 'completed';
+      return { result: undefined, changed: true };
+    });
   }
 
   /**
    * Mark a submission as failed
    */
   async markFailed(submissionId: string): Promise<void> {
-    this.statusMap.set(submissionId, 'failed');
+    this.updateState((state) => {
+      state.statuses[submissionId] = 'failed';
+      return { result: undefined, changed: true };
+    });
   }
 
   /**
    * Get all stored results for a submission
    */
   async getResults(submissionId: string): Promise<SandboxExecutionResult[]> {
-    return this.resultsMap.get(submissionId) ?? [];
+    const state = this.readState();
+    return structuredClone(state.results[submissionId] ?? []);
   }
 
   /**
    * Clear all queue state
    */
   clear(): void {
-    this.queue = [];
-    this.jobMap.clear();
-    this.statusMap.clear();
-    this.resultsMap.clear();
+    if (!this.storagePath) {
+      this.memoryState = createEmptyQueueState();
+      return;
+    }
+    withFileLock(this.storagePath, () => {
+      writeJsonAtomic(this.storagePath!, createEmptyQueueState());
+    });
   }
 }
 
