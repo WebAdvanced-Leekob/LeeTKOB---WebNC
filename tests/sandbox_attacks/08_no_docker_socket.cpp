@@ -8,5 +8,6 @@ int main() {
         std::cout << "BREACH_DOCKER_SOCKET_FOUND" << std::endl;
         return 0; // Vi phạm nếu phát hiện socket
     }
+    std::cout << "SAFE_NO_DOCKER_SOCKET" << std::endl;
     return 1;
 }

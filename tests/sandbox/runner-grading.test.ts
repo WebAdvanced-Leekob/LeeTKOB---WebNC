@@ -226,5 +226,23 @@ describe('Sandbox Runner Grading & Compilation (A1 Fixes)', () => {
       expect(result.status).toBe('ACCEPTED');
       expect(result.passedTests).toBe(1);
     });
+
+    it('fails closed with compileSuccess: false when Docker daemon is unavailable', async () => {
+      mockExecSync.mockImplementation(() => {
+        throw new Error('Cannot connect to the Docker daemon');
+      });
+
+      const result = await runSandboxCode({
+        sourceCode: 'int main() { return 0; }',
+        testCases: [{ id: 'tc1', input: '', expectedOutput: '' }],
+      });
+
+      expect(result.compileSuccess).toBe(false);
+      expect(result.compileOutput).toContain('Docker daemon is not available');
+      expect(result.status).toBe('RUNTIME_ERROR');
+      expect(result.passedTests).toBe(0);
+      expect(result.totalTests).toBe(1);
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
   });
 });

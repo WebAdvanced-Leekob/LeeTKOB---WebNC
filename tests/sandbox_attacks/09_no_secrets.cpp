@@ -9,5 +9,6 @@ int main() {
             return 0; // Vi phạm nếu đọc được key
         }
     }
+    std::cout << "SAFE_NO_SECRETS" << std::endl;
     return 1;
 }

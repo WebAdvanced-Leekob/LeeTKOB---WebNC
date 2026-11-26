@@ -78,7 +78,18 @@ export async function runSandboxCode(
   };
 
   if (!isDockerAvailable()) {
-    return simulateSandboxExecution(sourceCode, limits, testCases);
+    return {
+      compileSuccess: false,
+      compileOutput:
+        'Docker daemon is not available. Sandbox execution requires Docker.',
+      status: 'RUNTIME_ERROR',
+      passedTests: 0,
+      totalTests: testCases.length,
+      cpuTimeMs: 0,
+      memoryKb: 0,
+      stdout: '',
+      stderr: 'Docker daemon is not available.',
+    };
   }
 
   return executeInDockerSandbox(sourceCode, limits, testCases);
@@ -504,70 +515,4 @@ async function executeInDockerSandbox(
   } finally {
     removeSandboxContainer(containerName);
   }
-}
-
-/**
- * Local Simulator Fallback (Ensures development sanity when Docker daemon is not active)
- */
-function simulateSandboxExecution(
-  sourceCode: string,
-  limits: SandboxLimits,
-  testCases: TestCase[]
-): SandboxExecutionResult {
-  let status: ExecutionStatus = 'ACCEPTED';
-  const stdout = '';
-  const stderr = '';
-
-  if (
-    sourceCode.includes('volatile unsigned long long counter') ||
-    sourceCode.includes('02_cpu_limit')
-  ) {
-    status = 'TIME_LIMIT_EXCEEDED';
-  } else if (
-    sourceCode.includes('sleep_for') ||
-    sourceCode.includes('03_wall_time')
-  ) {
-    status = 'TIME_LIMIT_EXCEEDED';
-  } else if (
-    sourceCode.includes('1024ULL * 1024ULL * 1024ULL') ||
-    sourceCode.includes('04_memory_limit')
-  ) {
-    status = 'MEMORY_LIMIT_EXCEEDED';
-  } else if (
-    sourceCode.includes('Spamming stdout with a lot of junk data') ||
-    sourceCode.includes('06_output_limit')
-  ) {
-    status = 'OUTPUT_LIMIT_EXCEEDED';
-  } else if (
-    sourceCode.includes('fork()') ||
-    sourceCode.includes('05_process_limit')
-  ) {
-    status = 'RUNTIME_ERROR';
-  } else if (
-    sourceCode.includes('01_no_network') ||
-    sourceCode.includes('socket(AF_INET')
-  ) {
-    status = 'RUNTIME_ERROR';
-  } else if (
-    sourceCode.includes('07_non_root') ||
-    sourceCode.includes('08_no_docker_socket') ||
-    sourceCode.includes('09_no_secrets')
-  ) {
-    status = 'RUNTIME_ERROR';
-  }
-
-  const totalTests = testCases.length;
-  const passedTests = status === 'ACCEPTED' ? totalTests : 0;
-
-  return {
-    compileSuccess: true,
-    compileOutput: '',
-    status,
-    passedTests,
-    totalTests,
-    cpuTimeMs: 15,
-    memoryKb: 4096,
-    stdout,
-    stderr,
-  };
 }

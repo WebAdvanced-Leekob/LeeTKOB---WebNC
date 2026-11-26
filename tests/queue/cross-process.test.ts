@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SubmissionQueue } from '../../src/queue/submission-queue.js';
+import { isDockerAvailable } from '../../src/sandbox/runner.js';
 import { DataStore } from '../../src/store/data-store.js';
 
 describe('Cross-Process Queue & Worker Persistence (A2 Fixes)', () => {
@@ -86,18 +87,27 @@ describe('Cross-Process Queue & Worker Persistence (A2 Fixes)', () => {
     }
 
     // 3. Verify API process sees the persisted result & review items from Worker process
+    const dockerAvailable = isDockerAvailable();
     expect(await apiQueue.getStatus('sub-xproc-01')).toBe('completed');
     const results = await apiQueue.getResults('sub-xproc-01');
     expect(results).toHaveLength(1);
-    expect(results[0].status).toBe('ACCEPTED');
 
     const storedSub = apiStore.getSubmission('sub-xproc-01');
     expect(storedSub?.status).toBe('completed');
-    expect(storedSub?.result?.status).toBe('ACCEPTED');
 
-    const reviewQueue = apiStore.getReviewQueue('lab-xproc');
-    expect(reviewQueue.items).toHaveLength(1);
-    expect(reviewQueue.items[0].submissionId).toBe('sub-xproc-01');
+    if (dockerAvailable) {
+      expect(results[0].compileSuccess).toBe(true);
+      expect(results[0].status).toBe('ACCEPTED');
+      expect(storedSub?.result?.status).toBe('ACCEPTED');
+
+      const reviewQueue = apiStore.getReviewQueue('lab-xproc');
+      expect(reviewQueue.items).toHaveLength(1);
+      expect(reviewQueue.items[0].submissionId).toBe('sub-xproc-01');
+    } else {
+      // Fail-closed behavior when Docker daemon is unavailable
+      expect(results[0].compileSuccess).toBe(false);
+      expect(results[0].status).toBe('RUNTIME_ERROR');
+    }
 
     // 4. Restarting another worker process does not re-judge already completed submission
     const worker2 = spawnWorker();

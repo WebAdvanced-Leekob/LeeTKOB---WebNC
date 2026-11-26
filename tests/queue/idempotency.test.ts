@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { SubmissionQueue } from '../../src/queue/submission-queue.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JudgeWorker } from '../../src/queue/judge-worker.js';
+import { SubmissionQueue } from '../../src/queue/submission-queue.js';
+import * as sandboxRunner from '../../src/sandbox/runner.js';
 
 describe('Queue Idempotency (Criterion 2)', () => {
   let queue: SubmissionQueue;
@@ -9,6 +10,25 @@ describe('Queue Idempotency (Criterion 2)', () => {
   beforeEach(() => {
     queue = new SubmissionQueue();
     worker = new JudgeWorker(queue);
+    if (!sandboxRunner.isDockerAvailable()) {
+      vi.spyOn(sandboxRunner, 'runSandboxCode').mockImplementation(
+        async ({ testCases = [] }) => ({
+          compileSuccess: true,
+          compileOutput: '',
+          status: 'ACCEPTED',
+          passedTests: testCases.length,
+          totalTests: testCases.length,
+          cpuTimeMs: 10,
+          memoryKb: 1024,
+          stdout: 'OK',
+          stderr: '',
+        })
+      );
+    }
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('should judge exactly once when worker is stopped, job enqueued, and restarted', async () => {
