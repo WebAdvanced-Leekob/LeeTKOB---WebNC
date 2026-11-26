@@ -12,6 +12,12 @@ import type {
   SandboxExecutionResult,
   SubmissionJob,
 } from '../types/sandbox.types.js';
+import {
+  readJsonFile,
+  resolveDefaultStorePath,
+  updateJsonFile,
+  withFileLock,
+} from './json-file-store.js';
 
 export interface StoredSubmission extends SubmissionJob {
   status: SubmissionQueueStatus;
@@ -43,82 +49,138 @@ export interface StoredReviewQueueResponse extends ReviewQueueResponse {
   items: StoredReviewQueueItem[];
 }
 
-/** In-memory storage. Each instance owns its state; callers receive snapshots. */
+interface DataStoreState {
+  accounts: Record<string, AuthUser>;
+  labs: Record<string, StoredLab>;
+  submissions: Record<string, StoredSubmission>;
+  reviewItems: Record<string, StoredReviewQueueItem>;
+}
+
+function createEmptyDataStoreState(): DataStoreState {
+  return {
+    accounts: {},
+    labs: {},
+    submissions: {},
+    reviewItems: {},
+  };
+}
+
+/**
+ * Persistent / in-memory DataStore.
+ * Uses file-backed atomic JSON storage when configured (or outside tests)
+ * so independent API and Worker processes share state seamlessly.
+ */
 export class DataStore {
-  private readonly accounts = new Map<string, AuthUser>();
-  private readonly labs = new Map<string, StoredLab>();
-  private readonly submissions = new Map<string, StoredSubmission>();
-  private readonly reviewItems = new Map<string, StoredReviewQueueItem>();
+  private readonly storagePath: string | undefined;
+  private memoryState: DataStoreState = createEmptyDataStoreState();
 
-  getAccountCount(): number {
-    return this.accounts.size;
+  constructor(storagePath?: string) {
+    this.storagePath =
+      storagePath ??
+      process.env.DATA_STORE_PATH ??
+      resolveDefaultStorePath('data-store.json');
   }
 
-  createAccount(token: string, user: AuthUser): boolean {
-    if (this.accounts.has(token)) return false;
-    this.accounts.set(token, structuredClone(user));
-    return true;
-  }
-
-  getAccountByToken(token: string): AuthUser | null {
-    return structuredClone(this.accounts.get(token) ?? null);
-  }
-
-  createLab(lab: Lab): Lab {
-    if (this.labs.has(lab.id)) {
-      throw new Error(`Lab '${lab.id}' already exists.`);
+  private readState(): DataStoreState {
+    if (!this.storagePath) {
+      return this.memoryState;
     }
-    this.labs.set(lab.id, structuredClone(lab));
-    return structuredClone(lab);
-  }
-
-  getLab(labId: string): StoredLab | null {
-    return structuredClone(this.labs.get(labId) ?? null);
-  }
-
-  getLabsByClassId(classId: string): Lab[] {
-    return structuredClone(
-      [...this.labs.values()].filter((lab) => lab.classId === classId)
+    return withFileLock(this.storagePath, () =>
+      readJsonFile(this.storagePath!, createEmptyDataStoreState)
     );
   }
 
-  createSubmission(job: SubmissionJob): string {
-    if (this.submissions.has(job.submissionId)) {
-      throw new Error(`Submission '${job.submissionId}' already exists.`);
+  private updateState<R>(
+    updater: (state: DataStoreState) => { result: R; changed: boolean }
+  ): R {
+    if (!this.storagePath) {
+      return updater(this.memoryState).result;
     }
-    this.submissions.set(job.submissionId, {
-      ...structuredClone(job),
-      status: 'queued',
-      result: null,
+    return updateJsonFile(this.storagePath, createEmptyDataStoreState, updater);
+  }
+
+  getAccountCount(): number {
+    return Object.keys(this.readState().accounts).length;
+  }
+
+  createAccount(token: string, user: AuthUser): boolean {
+    return this.updateState((state) => {
+      if (state.accounts[token]) {
+        return { result: false, changed: false };
+      }
+      state.accounts[token] = structuredClone(user);
+      return { result: true, changed: true };
     });
-    return job.submissionId;
+  }
+
+  getAccountByToken(token: string): AuthUser | null {
+    return structuredClone(this.readState().accounts[token] ?? null);
+  }
+
+  createLab(lab: Lab): Lab {
+    return this.updateState((state) => {
+      if (state.labs[lab.id]) {
+        throw new Error(`Lab '${lab.id}' already exists.`);
+      }
+      state.labs[lab.id] = structuredClone(lab);
+      return { result: structuredClone(lab), changed: true };
+    });
+  }
+
+  getLab(labId: string): StoredLab | null {
+    return structuredClone(this.readState().labs[labId] ?? null);
+  }
+
+  getLabsByClassId(classId: string): Lab[] {
+    const labs = Object.values(this.readState().labs);
+    return structuredClone(labs.filter((lab) => lab.classId === classId));
+  }
+
+  createSubmission(job: SubmissionJob): string {
+    return this.updateState((state) => {
+      if (state.submissions[job.submissionId]) {
+        throw new Error(`Submission '${job.submissionId}' already exists.`);
+      }
+      state.submissions[job.submissionId] = {
+        ...structuredClone(job),
+        status: 'queued',
+        result: null,
+      };
+      return { result: job.submissionId, changed: true };
+    });
   }
 
   getSubmission(submissionId: string): StoredSubmission | null {
-    return structuredClone(this.submissions.get(submissionId) ?? null);
+    return structuredClone(this.readState().submissions[submissionId] ?? null);
   }
 
   updateSubmissionResult(
     submissionId: string,
     result: SandboxExecutionResult
   ): void {
-    const submission = this.submissions.get(submissionId);
-    if (!submission) {
-      throw new Error(`Submission '${submissionId}' not found.`);
-    }
-    submission.result = structuredClone(result);
-    submission.status = 'completed';
+    this.updateState((state) => {
+      const submission = state.submissions[submissionId];
+      if (!submission) {
+        throw new Error(`Submission '${submissionId}' not found.`);
+      }
+      submission.result = structuredClone(result);
+      submission.status = 'completed';
+      return { result: undefined, changed: true };
+    });
   }
 
   addReviewItem(item: StoredReviewQueueItem): void {
-    if (this.reviewItems.has(item.id)) {
-      throw new Error(`Review item '${item.id}' already exists.`);
-    }
-    this.reviewItems.set(item.id, structuredClone(item));
+    this.updateState((state) => {
+      if (state.reviewItems[item.id]) {
+        throw new Error(`Review item '${item.id}' already exists.`);
+      }
+      state.reviewItems[item.id] = structuredClone(item);
+      return { result: undefined, changed: true };
+    });
   }
 
   getReviewItem(itemId: string): StoredReviewQueueItem | null {
-    return structuredClone(this.reviewItems.get(itemId) ?? null);
+    return structuredClone(this.readState().reviewItems[itemId] ?? null);
   }
 
   getReviewQueue(
@@ -139,7 +201,7 @@ export class DataStore {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       throw new RangeError('limit must be an integer between 1 and 100.');
     }
-    const filtered = [...this.reviewItems.values()].filter(
+    const filtered = Object.values(this.readState().reviewItems).filter(
       (item) =>
         item.labId === labId &&
         (status === 'all' || item.status === status) &&
@@ -167,31 +229,33 @@ export class DataStore {
     reviewedBy: AuthUser['id'],
     decision?: ReviewDecision
   ): StoredReviewQueueItem {
-    const item = this.reviewItems.get(itemId);
-    if (!item) {
-      throw new Error(`Review item '${itemId}' not found.`);
-    }
-    if (item.status === 'reviewed') {
-      throw new Error(`Review item '${itemId}' is already reviewed.`);
-    }
-    if (decision?.decision === 'override') {
-      item.verdict = decision.newVerdict;
-      item.unsureReason =
-        decision.newVerdict === 'unsure'
-          ? (item.unsureReason ?? 'model_unsure')
-          : null;
-      if (decision.newVerdict === 'pass') item.evidence = [];
-    }
-    if (decision) item.reviewDecision = structuredClone(decision);
-    item.status = 'reviewed';
-    item.reviewedBy = reviewedBy;
-    item.reviewedAt = new Date().toISOString();
-    return structuredClone(item);
+    return this.updateState((state) => {
+      const item = state.reviewItems[itemId];
+      if (!item) {
+        throw new Error(`Review item '${itemId}' not found.`);
+      }
+      if (item.status === 'reviewed') {
+        throw new Error(`Review item '${itemId}' is already reviewed.`);
+      }
+      if (decision?.decision === 'override') {
+        item.verdict = decision.newVerdict;
+        item.unsureReason =
+          decision.newVerdict === 'unsure'
+            ? (item.unsureReason ?? 'model_unsure')
+            : null;
+        if (decision.newVerdict === 'pass') item.evidence = [];
+      }
+      if (decision) item.reviewDecision = structuredClone(decision);
+      item.status = 'reviewed';
+      item.reviewedBy = reviewedBy;
+      item.reviewedAt = new Date().toISOString();
+      return { result: structuredClone(item), changed: true };
+    });
   }
 
   /** Reports readiness only; this method does not publish marks. */
   getPublishStatus(labId: string): PublishStatus {
-    const unreviewedCount = [...this.reviewItems.values()].filter(
+    const unreviewedCount = Object.values(this.readState().reviewItems).filter(
       (item) => item.labId === labId && item.status === 'pending'
     ).length;
     return { canPublish: unreviewedCount === 0, unreviewedCount };
@@ -199,13 +263,18 @@ export class DataStore {
 
   /** Called only after an explicit, authorized publish request. */
   publishLab(labId: string): StoredLab {
-    const lab = this.labs.get(labId);
-    if (!lab) throw new Error(`Lab '${labId}' not found.`);
-    if (!this.getPublishStatus(labId).canPublish) {
-      throw new Error(`Lab '${labId}' still has unreviewed items.`);
-    }
-    lab.status = 'published';
-    return structuredClone(lab);
+    return this.updateState((state) => {
+      const lab = state.labs[labId];
+      if (!lab) throw new Error(`Lab '${labId}' not found.`);
+      const unreviewedCount = Object.values(state.reviewItems).filter(
+        (item) => item.labId === labId && item.status === 'pending'
+      ).length;
+      if (unreviewedCount > 0) {
+        throw new Error(`Lab '${labId}' still has unreviewed items.`);
+      }
+      lab.status = 'published';
+      return { result: structuredClone(lab), changed: true };
+    });
   }
 }
 

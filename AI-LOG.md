@@ -337,3 +337,12 @@ Kept: All 9 Docker security flags (`--network none`, `--cpus 1.0`, `--memory`, `
 Changed: Refactored `executeInDockerSandbox` in `src/sandbox/runner.ts` into container start (`docker run -d`), dedicated C++17 compilation (`compileInContainer` using `g++ -std=c++17 -O2`), per-testcase execution (`runSingleTestInContainer` piping `testCase.input` to stdin with isolated `wallClockTimer`), and guaranteed cleanup (`removeSandboxContainer`). Exported `compareTokens` for whitespace-normalized token matching. Added 6 unit tests in `tests/sandbox/runner-grading.test.ts`.
 Rejected: Merging compile and multi-test runs into a single `bash -c` invocation, which conflates compile errors with runtime errors and includes startup/compile latency in `wallClockLimitMs`.
 By hand: Verified `format:fix`, `typecheck`, `lint`, and full test suite (22 files, 152/152 tests passing).
+
+
+## 2026-11-26 — decouple judge worker process and add cross-process persistent queue and DataStore (A2)
+Tool: Antigravity (Gemini 4 Hydrogen)
+Asked for: Decouple `JudgeWorker` from `src/server.ts` into a standalone process (`src/worker.ts`) and back `SubmissionQueue` and `DataStore` with shared cross-process persistence so the worker can be stopped and restarted independently while preserving queued jobs and results.
+Kept: All existing API routes, idempotency semantics (`submissionId` primary key), test-mode in-memory isolation when no store path is configured, and graceful `SIGINT`/`SIGTERM` shutdown.
+Changed: Added atomic lock-guarded JSON file persistence (`src/store/json-file-store.ts`) with `QUEUE_STORE_PATH` / `DATA_STORE_PATH` support (auto-enabled outside Vitest in `.leetkob-data/`). Updated `SubmissionQueue` (`src/queue/submission-queue.ts`) and `DataStore` (`src/store/data-store.ts`) to share state across processes via `JsonFileStore`. Moved worker polling out of `src/server.ts` into standalone `src/worker.ts` and added `worker` / `start:worker` scripts in `package.json`. Updated `tests/server.test.ts` and added real multi-process integration test `tests/queue/cross-process.test.ts`.
+Rejected: Keeping inline `setInterval` worker polling inside `src/server.ts` or relying solely on process-local `Map` state, which prevents independent worker restarts.
+By hand: Verified `format:fix`, `typecheck`, `lint`, and full test suite (23 files, 155/155 tests passing including cross-process OS spawn test).

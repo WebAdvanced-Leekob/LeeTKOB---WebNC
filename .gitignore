@@ -8,3 +8,4 @@ build/
 coverage/
 *predictions*.jsonl
 !dev-set-run/**
+.leetkob-data/

@@ -7,8 +7,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
+    "start:worker": "node dist/worker.js",
     "seed:accounts": "tsx scripts/seed-accounts.ts",
     "dev": "tsx watch src/server.ts",
+    "worker": "tsx src/worker.ts",
     "checker": "tsx src/checker/cli.ts",
     "lint": "eslint .",
     "format:check": "prettier --check .",
