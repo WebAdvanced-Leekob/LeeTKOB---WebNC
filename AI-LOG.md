@@ -355,3 +355,12 @@ Kept: CI workflow (`ci.yml`) building `docker/Dockerfile.sandbox` on `pa*` tags 
 Changed: Removed `simulateSandboxExecution` from `src/sandbox/runner.ts` and returned fail-closed `compileSuccess: false, status: 'RUNTIME_ERROR'` when Docker is unavailable. Added `SAFE_NON_ROOT`, `SAFE_NO_DOCKER_SOCKET`, and `SAFE_NO_SECRETS` markers to `07_non_root.cpp`, `08_no_docker_socket.cpp`, and `09_no_secrets.cpp`. Updated `tests/sandbox/runner.test.ts` to assert `compileSuccess: true` on all 9 minimums, positive `SAFE_*` markers on tests 7–9, CI Docker enforcement (`CI === 'true'`), and honest `describe.skipIf(!dockerAvailable)` locally when Docker is stopped. Added fail-closed test in `tests/sandbox/runner-grading.test.ts`. Updated `idempotency.test.ts`, `full-pipeline.test.ts`, and `cross-process.test.ts` for local no-Docker compatibility without fake runner fallback.
 Rejected: Silently faking `compileSuccess: true` and `ACCEPTED` via substring matching when Docker daemon is unavailable.
 By hand: Verified `format:fix`, `typecheck`, `lint`, and `npm test` (23 files: 148 passed, 9 Docker-only security tests honestly skipped locally when Docker daemon is stopped).
+
+
+## 2026-11-26 — add leetkob-worker service and shared .leetkob-data volume in docker-compose.yml
+Tool: Antigravity (Gemini 4 Hydrogen)
+Asked for: Update `docker-compose.yml` to add the `leetkob-worker` service (`npm run start:worker`), mount a shared `.leetkob-data` volume between `leetkob-api` and `leetkob-worker`, and move `/var/run/docker.sock` from `leetkob-api` to `leetkob-worker`.
+Kept: `leetkob-sandbox` image build service, `leetkob-api` port mapping (`3000:3000`) and healthcheck, and non-root `USER node` execution in `Dockerfile`.
+Changed: Updated `docker-compose.yml` to add `leetkob-worker` (`command: ["npm", "run", "start:worker"]`, `/var/run/docker.sock` mount, `group_add`, `depends_on: leetkob-sandbox`), removed `/var/run/docker.sock` and `DOCKER_HOST` from `leetkob-api`, and added shared named volume `leetkob-data:/app/.leetkob-data` with explicit `QUEUE_STORE_PATH` and `DATA_STORE_PATH`. Updated `Dockerfile` to pre-create `/app/.leetkob-data` owned by `node:node` so the mounted volume is writable by the non-root `node` user.
+Rejected: Mounting Docker socket on the API container or storing queue/data separately inside container-local filesystems.
+By hand: Verified `npm run build` (`dist/server.js` and `dist/worker.js`) and `npm run format:check` pass.

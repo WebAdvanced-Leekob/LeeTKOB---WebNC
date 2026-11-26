@@ -8,18 +8,12 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3000"
-      SANDBOX_DOCKER_IMAGE: leetkob-sandbox:latest
-      DOCKER_HOST: unix:///var/run/docker.sock
+      QUEUE_STORE_PATH: /app/.leetkob-data/submission-queue.json
+      DATA_STORE_PATH: /app/.leetkob-data/data-store.json
     ports:
       - "3000:3000"
-    # Set DOCKER_GID in .env to the host socket's group ID on Linux.
-    group_add:
-      - "${DOCKER_GID:-0}"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      leetkob-sandbox:
-        condition: service_completed_successfully
+      - leetkob-data:/app/.leetkob-data
     healthcheck:
       test:
         - CMD
@@ -32,7 +26,31 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Build the image once; the API runner creates a fresh container for each job.
+  leetkob-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["npm", "run", "start:worker"]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      SANDBOX_DOCKER_IMAGE: leetkob-sandbox:latest
+      DOCKER_HOST: unix:///var/run/docker.sock
+      QUEUE_STORE_PATH: /app/.leetkob-data/submission-queue.json
+      DATA_STORE_PATH: /app/.leetkob-data/data-store.json
+    # Set DOCKER_GID in .env to the host socket's group ID on Linux.
+    group_add:
+      - "${DOCKER_GID:-0}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - leetkob-data:/app/.leetkob-data
+    depends_on:
+      leetkob-sandbox:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Build the image once; the worker runner creates a fresh container for each job.
   leetkob-sandbox:
     image: leetkob-sandbox:latest
     build:
@@ -48,3 +66,6 @@ services:
     pids_limit: 64
     mem_limit: 256m
     cpus: 1
+
+volumes:
+  leetkob-data:
