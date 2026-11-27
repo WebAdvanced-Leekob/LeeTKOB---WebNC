@@ -1,0 +1,4 @@
+* text=auto eol=lf
+dev-set/** text eol=lf
+custom-cases/** text eol=lf
+eval.mjs text eol=lf
