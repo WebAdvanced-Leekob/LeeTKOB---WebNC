@@ -67,6 +67,7 @@ describe('Cross-Process Queue & Worker Persistence (A2 Fixes)', () => {
           ...process.env,
           NODE_ENV: 'development',
           VITEST: '',
+          MODEL_OFF: '1',
           QUEUE_STORE_PATH: queuePath,
           DATA_STORE_PATH: dataStorePath,
           WORKER_POLL_INTERVAL_MS: '50',

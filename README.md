@@ -19,12 +19,12 @@
 ## 2. Mô hình AI & Bảng tính chi phí cho bài Lab 80 sinh viên (Tiêu chí 4)
 
 ### 2.1. Cấu hình mô hình
-* **Nhà cung cấp (Provider):** Google Generative AI (Gemini REST API native fetch)
-* **Tên mô hình (Model Name):** `gemini-3.5-flash-lite` (hỗ trợ thêm `gemini-3.1-flash-lite`, `gemini-1.5-flash`)
+* **Nhà cung cấp (Provider):** Deploy API OpenAI-compatible (`https://api-cdn.deploy.com/api/v1/chat/completions`, hỗ trợ fallback Google Gemini REST API)
+* **Tên mô hình (Model Name):** `deepseek-ai/deepseek-v4.1-flash-1017`
 * **Đơn giá niêm yết (Pricing):**
-  * **Input (Prompt tokens):** \$0.075 / 1,000,000 tokens
-  * **Output (Completion tokens):** \$0.300 / 1,000,000 tokens
-* **Hạn mức an toàn (Safety Spending Cap):** \$5.00 USD (cấu hình qua biến môi trường `MODEL_SPENDING_CAP_USD=5.00`)
+  * **Input (Prompt tokens):** \$0.14 / 1,000,000 tokens
+  * **Output (Completion tokens):** \$0.28 / 1,000,000 tokens
+* **Hạn mức an toàn (Safety Spending Cap):** \$5.00 USD (cấu hình qua biến môi trường `MODEL_SPENDING_CAP_USD=5.00`, được kiểm tra trước mỗi lần gọi LLM qua `call_log.jsonl`)
 
 ### 2.2. Phép tính số học chi tiết (Cost Arithmetic) cho bài lab 80 sinh viên
 Trong một bài lab C++ chuẩn gồm 80 sinh viên với mỗi bài nộp có 2 ràng buộc (1 ban-list và 1 ràng buộc ngữ nghĩa):
@@ -33,7 +33,7 @@ Trong một bài lab C++ chuẩn gồm 80 sinh viên với mỗi bài nộp có 
    * **Số lượt gọi LLM:** 0 lượt gọi.
    * **Chi phí:** **\$0.00 USD**.
 2. **Ràng buộc Ngữ nghĩa (Semantic Constraint — ví dụ: `Must implement Merge Sort recursively`):**
-   * Số bài nộp cần đánh giá: 80 bài (chỉ đánh giá bài nộp cuối cùng đạt trạng thái `ACCEPTED`).
+   * Số bài nộp cần đánh giá: 80 bài (chỉ đánh giá bài nộp đạt trạng thái `ACCEPTED`).
    * **Số lượt gọi mô hình:** 80 lượt gọi.
    * **Ước lượng Token trung bình mỗi bài nộp** (mã nguồn đã được khử toàn bộ comment, chuỗi thừa và định danh sinh viên):
      * Prompt tokens: ~300 tokens / request (bao gồm mô tả đề bài, ràng buộc và mã nguồn C++ sạch).
@@ -42,13 +42,10 @@ Trong một bài lab C++ chuẩn gồm 80 sinh viên với mỗi bài nộp có 
      $$\text{Prompt Tokens} = 80 \times 300 = 24,000 \text{ tokens}$$
      $$\text{Completion Tokens} = 80 \times 100 = 8,000 \text{ tokens}$$
    * **Tính toán chi phí:**
-     $$\text{Prompt Cost} = \frac{24,000}{1,000,000} \times \$0.075 = \$0.00180 \text{ USD}$$
-     $$\text{Completion Cost} = \frac{8,000}{1,000,000} \times \$0.300 = \$0.00240 \text{ USD}$$
-     $$\textbf{Tổng chi phí cho toàn bài lab 80 sinh viên} = \$0.00180 + \$0.00240 = \mathbf{\$0.00420 \text{ USD}} \approx 105 \text{ VNĐ}$$
-   * *(Nếu bài lab có tối đa 2 ràng buộc ngữ nghĩa cần gọi AI $\rightarrow 160$ requests $\rightarrow$ Tổng chi phí là **\$0.00840 USD** $\approx$ 210 VNĐ).*
-3. **Thực tế trên gói Google AI Studio Free Tier:**
-   * Hạn mức miễn phí: 15 RPM (yêu cầu/phút) và 1,500 RPD (yêu cầu/ngày).
-   * Toàn bộ 80 bài nộp được xử lý hoàn toàn miễn phí: **\$0.00 USD**.
+     $$\text{Prompt Cost} = \frac{24,000}{1,000,000} \times \$0.14 = \$0.00336 \text{ USD}$$
+     $$\text{Completion Cost} = \frac{8,000}{1,000,000} \times \$0.28 = \$0.00224 \text{ USD}$$
+     $$\textbf{Tổng chi phí cho toàn bài lab 80 sinh viên} = \$0.00336 + \$0.00224 = \mathbf{\$0.00560 \text{ USD}} \approx 142 \text{ VNĐ}$$
+   * *(Nếu bài lab có tối đa 2 ràng buộc ngữ nghĩa cần gọi AI $\rightarrow 160$ requests $\rightarrow$ Tổng chi phí là **\$0.01120 USD** $\approx$ 284 VNĐ).*
 
 ---
 

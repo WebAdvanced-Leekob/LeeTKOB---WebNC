@@ -20,6 +20,8 @@ import {
   appendCallLog,
   DEFAULT_CALL_LOG_PATH,
   getModelPricingFromEnv,
+  getSpendingCapUsdFromEnv,
+  getTotalSpentUsd,
 } from './call-logger.js';
 import { validateModelOutput, withTimeout } from './guardrails.js';
 import { buildSanitizedPrompt } from './prompt-sanitizer.js';
@@ -41,6 +43,8 @@ export interface EvaluateSemanticParams {
   statement: string;
   constraints: ConstraintDefinition[];
   sourceCode: string;
+  labId?: string;
+  spendingCapUsd?: number;
   model?: string;
   apiKey?: string;
   callProvider?: ProviderCallFn;
@@ -277,10 +281,12 @@ export async function evaluateSemanticWithLlm(
     statement,
     constraints,
     sourceCode,
+    labId,
+    spendingCapUsd: paramSpendingCapUsd,
     model = process.env.MODEL_NAME || defaultModel,
     apiKey,
     callProvider,
-    logFilePath = DEFAULT_CALL_LOG_PATH,
+    logFilePath = process.env.CALL_LOG_PATH || DEFAULT_CALL_LOG_PATH,
     timeoutMs = 30000,
   } = params;
 
@@ -304,6 +310,33 @@ export async function evaluateSemanticWithLlm(
       unsureReason: 'model_unsure',
       decidedBy: 'llm',
     }));
+  }
+
+  // 1b. Enforce per-lab spending cap (falls back to global MODEL_SPENDING_CAP_USD)
+  const spendingCapUsd =
+    paramSpendingCapUsd !== undefined &&
+    Number.isFinite(paramSpendingCapUsd) &&
+    paramSpendingCapUsd > 0
+      ? paramSpendingCapUsd
+      : getSpendingCapUsdFromEnv();
+
+  if (spendingCapUsd !== null) {
+    const spentUsd = await getTotalSpentUsd(logFilePath, labId);
+    if (spentUsd >= spendingCapUsd) {
+      if (process.env.NODE_ENV !== 'test') {
+        console.warn(
+          `[LLM Client] Spending cap reached${labId ? ` for lab ${labId}` : ''} ($${spentUsd.toFixed(4)} >= $${spendingCapUsd.toFixed(2)}); returning unsure (cost_cap_exceeded).`
+        );
+      }
+      return semanticConstraints.map((c) => ({
+        constraintId: c.id,
+        verdict: 'unsure',
+        evidence: [],
+        suggestedDeduction: 0,
+        unsureReason: 'cost_cap_exceeded',
+        decidedBy: 'llm',
+      }));
+    }
   }
 
   // 2. Build sanitized prompt (comments and student info stripped)
@@ -360,6 +393,7 @@ export async function evaluateSemanticWithLlm(
 
   await appendCallLog(
     {
+      ...(labId !== undefined ? { labId } : {}),
       requestId: providerResult.requestId,
       model,
       promptTokens,
@@ -373,10 +407,21 @@ export async function evaluateSemanticWithLlm(
     logFilePath
   );
 
-  // 4. Validate output against schema and verify evidence lines
-  return validateModelOutput(
-    providerResult.rawOutput,
-    semanticConstraints,
-    sourceCode
-  );
+  // 4. Validate output against schema and verify evidence lines (never throw out to worker)
+  try {
+    return validateModelOutput(
+      providerResult.rawOutput,
+      semanticConstraints,
+      sourceCode
+    );
+  } catch {
+    return semanticConstraints.map((c) => ({
+      constraintId: c.id,
+      verdict: 'unsure',
+      evidence: [],
+      suggestedDeduction: 0,
+      unsureReason: 'schema_invalid',
+      decidedBy: 'llm',
+    }));
+  }
 }

@@ -16,6 +16,7 @@ import type {
   UnsureReason,
   Verdict,
 } from '../types/constraint.types.js';
+import { stripCommentsPreservingLines } from './prompt-sanitizer.js';
 
 export interface ApplyGuardrailsParams {
   modelCall: () => Promise<string>;
@@ -73,27 +74,58 @@ export function extractJsonFromOutput(rawOutput: string): string {
 }
 
 /**
- * Verifies that all evidence lines match the actual submitted source code.
+ * Verifies that all evidence lines match actual non-blank, non-comment code lines
+ * in the submitted source code.
  * Every evidence line must:
  * 1. Have a valid 1-based line number within the bounds of the source code.
- * 2. Match the verbatim content of that line (ignoring trailing whitespace).
+ * 2. Contain non-empty text and target a non-blank line with real code outside comments.
+ * 3. Match the verbatim code line (either original line or comment-stripped code line).
  */
 export function verifyEvidenceLines(
-  evidence: EvidenceLine[],
-  sourceLines: string[]
+  evidence: unknown[],
+  sourceLines: string[],
+  commentStrippedLines?: string[]
 ): boolean {
   if (!Array.isArray(evidence) || evidence.length === 0) {
     return false;
   }
 
+  const nonCommentLines =
+    commentStrippedLines ??
+    stripCommentsPreservingLines(sourceLines.join('\n')).split(/\r?\n/);
+
   for (const item of evidence) {
-    const { line, text } = item;
-    if (typeof line !== 'number' || line < 1 || line > sourceLines.length) {
+    if (typeof item !== 'object' || item === null) {
+      return false;
+    }
+
+    const { line, text } = item as Record<string, unknown>;
+    if (
+      typeof line !== 'number' ||
+      !Number.isInteger(line) ||
+      line < 1 ||
+      line > sourceLines.length
+    ) {
+      return false;
+    }
+
+    if (typeof text !== 'string' || text.trim().length === 0) {
       return false;
     }
 
     const actualLine = sourceLines[line - 1];
-    if (actualLine.trim() !== text.trim()) {
+    const strippedLine = nonCommentLines[line - 1] ?? '';
+
+    // Reject blank lines and lines that exist exclusively inside stripped comments
+    if (actualLine.trim().length === 0 || strippedLine.trim().length === 0) {
+      return false;
+    }
+
+    const normalizedText = text.trim();
+    if (
+      actualLine.trim() !== normalizedText &&
+      strippedLine.trim() !== normalizedText
+    ) {
       return false;
     }
   }
@@ -111,6 +143,8 @@ export function validateModelOutput(
   sourceCode: string
 ): ConstraintVerdict[] {
   const sourceLines = sourceCode.split(/\r?\n/);
+  const commentStrippedLines =
+    stripCommentsPreservingLines(sourceCode).split(/\r?\n/);
   const cleanJson = extractJsonFromOutput(rawOutput);
 
   let parsed: unknown;
@@ -131,6 +165,7 @@ export function validateModelOutput(
 
   const modelVerdicts = (parsed as { verdicts: unknown[] }).verdicts;
   const verdictMap = new Map<string, Record<string, unknown>>();
+  const duplicateIds = new Set<string>();
 
   for (const item of modelVerdicts) {
     if (
@@ -138,14 +173,21 @@ export function validateModelOutput(
       item !== null &&
       typeof (item as Record<string, unknown>).constraintId === 'string'
     ) {
-      verdictMap.set(
-        (item as Record<string, unknown>).constraintId as string,
-        item as Record<string, unknown>
-      );
+      const constraintId = (item as Record<string, unknown>)
+        .constraintId as string;
+      if (verdictMap.has(constraintId)) {
+        duplicateIds.add(constraintId);
+      } else {
+        verdictMap.set(constraintId, item as Record<string, unknown>);
+      }
     }
   }
 
   return constraints.map((constraint) => {
+    if (duplicateIds.has(constraint.id)) {
+      return createUnsureVerdict(constraint.id, 'schema_invalid');
+    }
+
     const rawVerdictObj = verdictMap.get(constraint.id);
 
     if (!rawVerdictObj || typeof rawVerdictObj.verdict !== 'string') {
@@ -167,7 +209,8 @@ export function validateModelOutput(
 
       const isValidEvidence = verifyEvidenceLines(
         rawEvidence as EvidenceLine[],
-        sourceLines
+        sourceLines,
+        commentStrippedLines
       );
 
       if (!isValidEvidence) {

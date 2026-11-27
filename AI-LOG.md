@@ -364,3 +364,30 @@ Kept: `leetkob-sandbox` image build service, `leetkob-api` port mapping (`3000:3
 Changed: Updated `docker-compose.yml` to add `leetkob-worker` (`command: ["npm", "run", "start:worker"]`, `/var/run/docker.sock` mount, `group_add`, `depends_on: leetkob-sandbox`), removed `/var/run/docker.sock` and `DOCKER_HOST` from `leetkob-api`, and added shared named volume `leetkob-data:/app/.leetkob-data` with explicit `QUEUE_STORE_PATH` and `DATA_STORE_PATH`. Updated `Dockerfile` to pre-create `/app/.leetkob-data` owned by `node:node` so the mounted volume is writable by the non-root `node` user.
 Rejected: Mounting Docker socket on the API container or storing queue/data separately inside container-local filesystems.
 By hand: Verified `npm run build` (`dist/server.js` and `dist/worker.js`) and `npm run format:check` pass.
+
+
+## 2026-11-27 — wire judge worker to full async LLM constraint engine for ACCEPTED submissions only
+Tool: Antigravity (Gemini 4 Hydrogen)
+Asked for: Update `src/queue/judge-worker.ts` to call `await evaluateSubmissionWithEngine(...)` with `lab.statement` instead of synchronous `evaluateSubmission`, and restrict constraint checking strictly to `result.status === 'ACCEPTED'` submissions.
+Kept: Idempotent result storage, DataStore review queue item insertion, and fail-safe handling for compile errors and sandbox exceptions.
+Changed: Replaced `evaluateSubmission(job.sourceCode, lab.constraints)` with `await evaluateSubmissionWithEngine({ statement: lab.statement, sourceCode: job.sourceCode, constraints: lab.constraints })` in `src/queue/judge-worker.ts`. Tightened the guard from `result.compileSuccess || result.status === 'ACCEPTED'` to `result.status === 'ACCEPTED'` so `WRONG_ANSWER`, `TIME_LIMIT_EXCEEDED`, and `RUNTIME_ERROR` submissions skip constraint evaluation. Updated `tests/queue/judge-worker.test.ts`, `tests/integration/full-pipeline.test.ts` (explicit `MODEL_OFF=1` for deterministic offline integration), and `tests/queue/cross-process.test.ts`.
+Rejected: Evaluating constraints on failing submissions or bypassing the LLM semantic pipeline inside the background worker.
+By hand: Verified `format:fix`, `typecheck`, `lint`, and `npm test` (23 files: 150 passed, 9 Docker-only security tests skipped locally when Docker daemon is stopped).
+
+
+## 2026-11-27 — harden schema/evidence guardrails, enforce MODEL_SPENDING_CAP_USD, and align pricing docs (B3)
+Tool: Antigravity (Gemini 4 Hydrogen)
+Asked for: Harden `verifyEvidenceLines` against malformed items (`[null]`, non-integer `line`, non-string `text`), wrap `validateModelOutput` in `llm-client.ts` with `try/catch`, align `.env.example`, `call-logger.ts`, `README.md`, and `SELF_ASSESSMENT_REPORT.md` to DeepSeek V4.1 Flash (`$0.14 / $0.28`), and enforce `MODEL_SPENDING_CAP_USD`.
+Kept: Schema fallback verdicts (`unsure`), TA deduction protection, and call logging to `call_log.jsonl`.
+Changed: Updated `verifyEvidenceLines` in `src/checker/guardrails.ts` to validate non-null object items, `Number.isInteger(line)`, and `typeof text === 'string'`. Wrapped `validateModelOutput` in `src/checker/llm-client.ts` with `try/catch` and added `MODEL_SPENDING_CAP_USD` enforcement via `getSpendingCapUsdFromEnv()` and `getTotalSpentUsd()` in `src/checker/call-logger.ts`. Updated `getModelPricingFromEnv()` to default to `DEEPSEEK_V4_FLASH_PRICING` when using Deploy/DeepSeek. Aligned `.env`, `.env.example`, `README.md` (80-submission arithmetic: `\$0.00560` / `\$0.01120`), and `SELF_ASSESSMENT_REPORT.md`. Added regression tests in `tests/checker/guardrails.test.ts` and `tests/checker/llm-client.test.ts`.
+Rejected: Allowing malformed LLM evidence to throw `TypeError` into the worker or keeping mismatched Gemini pricing in DeepSeek documentation.
+By hand: Verified `format:fix`, `typecheck`, `lint`, and `npm test` (23 files: 156 passed, 9 Docker-only security tests skipped locally).
+
+
+## 2026-11-27 — add tests/ to custom-cases, update s01–s05 to read stdin/print sorted output, and enforce LF line endings
+Tool: Antigravity (Gemini 4 Hydrogen)
+Asked for: Add `tests/` (`01.in`–`03.out`) to `custom-cases/problems/sort-merge/`, update `s01.cpp`–`s05.cpp` to read from `std::cin` and print sorted arrays to `std::cout` (removing stdout trap text in `s03.cpp`), and enforce LF line endings so `eval.mjs` and `dev-set/labels.jsonl` SHA-256 hashes match the rubric (`c836edd8713521bb` and `262cda7b0ef5612e`).
+Kept: Exact ground-truth evidence line numbers (`s02.cpp` line 8 `std::sort`, `s05.cpp` lines 7–11 `mergeSort`), all `trap`/`injection`/`disguised` tags, and `dev-set/` unmodified.
+Changed: Created `custom-cases/problems/sort-merge/tests/{01,02,03}.{in,out}`. Updated `s01.cpp`–`s05.cpp` to read `n` integers from `std::cin` and print sorted output space-separated; fixed `s03.cpp` merge logic and moved the string-literal trap out of `stdout`. Added `.gitattributes` enforcing `eol=lf` on `dev-set/**`, `custom-cases/**`, and `eval.mjs`. Extended `tests/checker/custom-cases.test.ts` to verify `tests/` and stdin/stdout usage.
+Rejected: Leaving hardcoded arrays in `custom-cases` solutions or leaving Windows CRLF checkouts without `.gitattributes`.
+By hand: Verified LF-normalized SHA-256 hashes (`c836edd8713521bb` for `eval.mjs`, `262cda7b0ef5612e` for `dev-set/labels.jsonl`), `format:fix`, `typecheck`, `lint`, and `npm test` (23 files: 156 passed, 9 skipped).

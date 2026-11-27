@@ -18,8 +18,15 @@ void mergeSort(std::vector<int>& arr, int left, int right) {
 }
 
 int main() {
-    std::vector<int> a = {9, 5, 2, 7};
-    mergeSort(a, 0, a.size() - 1);
+    int n;
+    if (!(std::cin >> n)) return 0;
+    std::vector<int> a(n);
+    for (int i = 0; i < n; i++) std::cin >> a[i];
+    if (n > 0) mergeSort(a, 0, n - 1);
+    for (int i = 0; i < n; i++) {
+        if (i > 0) std::cout << ' ';
+        std::cout << a[i];
+    }
+    std::cout << '\n';
     return 0;
 }
-

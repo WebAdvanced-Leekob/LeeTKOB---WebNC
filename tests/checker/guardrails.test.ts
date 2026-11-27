@@ -86,6 +86,38 @@ describe('Guardrails & First Limits (Criterion 5 — 10 points)', () => {
       expect(verdicts[0].unsureReason).toBe('schema_invalid');
     });
 
+    it('should fallback to unsure (schema_invalid) when model output contains duplicate constraintId entries', () => {
+      const duplicateOutput = JSON.stringify({
+        verdicts: [
+          {
+            constraintId: 'C_SEMANTIC_01',
+            verdict: 'violation',
+            evidence: [
+              { line: 2, text: 'void mergeSort(int a[], int l, int r) {' },
+            ],
+          },
+          {
+            constraintId: 'C_SEMANTIC_01',
+            verdict: 'pass',
+            evidence: [],
+          },
+        ],
+      });
+
+      const verdicts = validateModelOutput(
+        duplicateOutput,
+        [semanticConstraint],
+        sampleSourceCode
+      );
+
+      expect(verdicts).toHaveLength(1);
+      expect(verdicts[0].constraintId).toBe('C_SEMANTIC_01');
+      expect(verdicts[0].verdict).toBe('unsure');
+      expect(verdicts[0].unsureReason).toBe('schema_invalid');
+      expect(verdicts[0].evidence).toEqual([]);
+      expect(verdicts[0].suggestedDeduction).toBe(0);
+    });
+
     it('should parse markdown fenced JSON codeblocks cleanly if model wrapped output in ```json', () => {
       const markdownJson = [
         '```json',
@@ -110,6 +142,36 @@ describe('Guardrails & First Limits (Criterion 5 — 10 points)', () => {
       expect(verdicts[0].verdict).toBe('pass');
       expect(verdicts[0].unsureReason).toBeNull();
     });
+
+    it.each([
+      ['null item', [null]],
+      ['non-integer line', [{ line: 1.5, text: '#include <iostream>' }]],
+      ['non-string text', [{ line: 1, text: 7 }]],
+    ])(
+      'should fallback to unsure (evidence_mismatch) without throwing on malformed evidence (%s)',
+      (_label, malformedEvidence) => {
+        const output = JSON.stringify({
+          verdicts: [
+            {
+              constraintId: 'C_SEMANTIC_01',
+              verdict: 'violation',
+              evidence: malformedEvidence,
+            },
+          ],
+        });
+
+        const verdicts = validateModelOutput(
+          output,
+          [semanticConstraint],
+          sampleSourceCode
+        );
+
+        expect(verdicts).toHaveLength(1);
+        expect(verdicts[0].verdict).toBe('unsure');
+        expect(verdicts[0].unsureReason).toBe('evidence_mismatch');
+        expect(verdicts[0].suggestedDeduction).toBe(0);
+      }
+    );
   });
 
   describe('2. Evidence Line Guard (Exact Code Verification)', () => {
@@ -188,6 +250,96 @@ describe('Guardrails & First Limits (Criterion 5 — 10 points)', () => {
       expect(verdicts[0].suggestedDeduction).toBe(semanticConstraint.deduction);
       expect(verdicts[0].evidence).toHaveLength(1);
       expect(verdicts[0].evidence[0].line).toBe(4);
+    });
+
+    it('should fallback to unsure (evidence_mismatch) when evidence targets a blank line or whitespace-only text', () => {
+      const codeWithBlankLine = [
+        '#include <iostream>',
+        '   ',
+        'void bubbleSort(int a[], int n) {}',
+      ].join('\n');
+
+      const outputTargetingBlank = JSON.stringify({
+        verdicts: [
+          {
+            constraintId: 'C_SEMANTIC_01',
+            verdict: 'violation',
+            evidence: [{ line: 2, text: '   ' }],
+          },
+        ],
+      });
+
+      const verdicts = validateModelOutput(
+        outputTargetingBlank,
+        [semanticConstraint],
+        codeWithBlankLine
+      );
+
+      expect(verdicts[0].verdict).toBe('unsure');
+      expect(verdicts[0].unsureReason).toBe('evidence_mismatch');
+      expect(verdicts[0].suggestedDeduction).toBe(0);
+    });
+
+    it('should fallback to unsure (evidence_mismatch) when evidence targets a single-line or block comment line', () => {
+      const codeWithComments = [
+        '// std::sort(a, a + n);',
+        '/*',
+        'void bubbleSort(int a[], int n) {}',
+        '*/',
+        'void mergeSort(int a[], int l, int r) {}',
+      ].join('\n');
+
+      for (const [line, text] of [
+        [1, '// std::sort(a, a + n);'],
+        [3, 'void bubbleSort(int a[], int n) {}'],
+      ] as const) {
+        const outputTargetingComment = JSON.stringify({
+          verdicts: [
+            {
+              constraintId: 'C_SEMANTIC_01',
+              verdict: 'violation',
+              evidence: [{ line, text }],
+            },
+          ],
+        });
+
+        const verdicts = validateModelOutput(
+          outputTargetingComment,
+          [semanticConstraint],
+          codeWithComments
+        );
+
+        expect(verdicts[0].verdict).toBe('unsure');
+        expect(verdicts[0].unsureReason).toBe('evidence_mismatch');
+        expect(verdicts[0].suggestedDeduction).toBe(0);
+      }
+    });
+
+    it('should accept evidence matching stripped code when line has a trailing inline comment', () => {
+      const codeWithInlineComment = [
+        '#include <iostream>',
+        'void bubbleSort(int a[], int n) {} // fallback sort',
+      ].join('\n');
+
+      const outputWithStrippedLine = JSON.stringify({
+        verdicts: [
+          {
+            constraintId: 'C_SEMANTIC_01',
+            verdict: 'violation',
+            evidence: [{ line: 2, text: 'void bubbleSort(int a[], int n) {}' }],
+          },
+        ],
+      });
+
+      const verdicts = validateModelOutput(
+        outputWithStrippedLine,
+        [semanticConstraint],
+        codeWithInlineComment
+      );
+
+      expect(verdicts[0].verdict).toBe('violation');
+      expect(verdicts[0].unsureReason).toBeNull();
+      expect(verdicts[0].suggestedDeduction).toBe(semanticConstraint.deduction);
     });
   });
 

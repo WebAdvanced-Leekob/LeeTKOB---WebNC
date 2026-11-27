@@ -36,6 +36,19 @@ describe('Custom Cases Evaluation (Criterion 6 & 7)', () => {
       )
     ).toBe(true);
     expect(fs.existsSync(path.join(customCasesDir, 'labels.jsonl'))).toBe(true);
+    const testsDir = path.join(customCasesDir, 'problems/sort-merge/tests');
+    expect(fs.existsSync(testsDir)).toBe(true);
+    expect(fs.existsSync(path.join(testsDir, '01.in'))).toBe(true);
+    expect(fs.existsSync(path.join(testsDir, '01.out'))).toBe(true);
+
+    for (const sol of ['s01.cpp', 's02.cpp', 's03.cpp', 's04.cpp', 's05.cpp']) {
+      const src = fs.readFileSync(
+        path.join(customCasesDir, 'solutions/sort-merge', sol),
+        'utf8'
+      );
+      expect(src).toContain('std::cin');
+      expect(src).toContain('std::cout');
+    }
 
     const labels = fs
       .readFileSync(path.join(customCasesDir, 'labels.jsonl'), 'utf8')

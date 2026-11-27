@@ -4,20 +4,55 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { evaluateSubmission } from '../engine/constraint-adapter.js';
+import { evaluateSubmissionWithEngine } from '../engine/constraint-adapter.js';
 import { runSandboxCode } from '../sandbox/runner.js';
-import { defaultDataStore, DataStore } from '../store/data-store.js';
+import {
+  defaultDataStore,
+  DataStore,
+  type StoredReviewQueueItem,
+} from '../store/data-store.js';
 import type { SandboxExecutionResult } from '../types/sandbox.types.js';
 import { defaultSubmissionQueue, SubmissionQueue } from './submission-queue.js';
+
+/** Deterministic PRNG (Mulberry32) for reproducible fixed-seed sampling tests. */
+export function createSeededRng(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export interface JudgeWorkerOptions {
+  rng?: () => number;
+  seed?: number;
+}
 
 export class JudgeWorker {
   private isRunning = false;
   private isProcessing = false;
+  private readonly rng: () => number;
 
   constructor(
     private readonly queue: SubmissionQueue = defaultSubmissionQueue,
-    private readonly dataStore: DataStore = defaultDataStore
-  ) {}
+    private readonly dataStore: DataStore = defaultDataStore,
+    options?: JudgeWorkerOptions
+  ) {
+    if (options?.rng) {
+      this.rng = options.rng;
+    } else if (options?.seed !== undefined) {
+      this.rng = createSeededRng(options.seed);
+    } else if (process.env.REVIEW_SAMPLE_SEED !== undefined) {
+      const parsed = Number(process.env.REVIEW_SAMPLE_SEED);
+      this.rng = Number.isFinite(parsed)
+        ? createSeededRng(parsed)
+        : () => Math.random();
+    } else {
+      this.rng = () => Math.random();
+    }
+  }
 
   /** Stop picking up new jobs; the current job is allowed to finish. */
   stop(): void {
@@ -72,10 +107,18 @@ export class JudgeWorker {
       }
 
       const lab = this.dataStore.getLab(job.labId);
-      if (lab && (result.compileSuccess || result.status === 'ACCEPTED')) {
-        const verdicts = evaluateSubmission(job.sourceCode, lab.constraints);
+      if (lab && result.status === 'ACCEPTED') {
+        const verdicts = await evaluateSubmissionWithEngine({
+          statement: lab.statement,
+          sourceCode: job.sourceCode,
+          constraints: lab.constraints,
+          labId: job.labId,
+          ...(lab.spendingCapUsd !== undefined
+            ? { spendingCapUsd: lab.spendingCapUsd }
+            : {}),
+        });
         for (const verdict of verdicts) {
-          this.dataStore.addReviewItem({
+          const reviewItem: StoredReviewQueueItem = {
             id: randomUUID(),
             labId: job.labId,
             submissionId: job.submissionId,
@@ -91,7 +134,13 @@ export class JudgeWorker {
             status: 'pending',
             reviewedBy: null,
             reviewedAt: null,
-          });
+          };
+
+          if (verdict.verdict === 'pass') {
+            this.dataStore.recordPassVerdict(reviewItem, this.rng());
+          } else {
+            this.dataStore.addReviewItem(reviewItem);
+          }
         }
       }
 

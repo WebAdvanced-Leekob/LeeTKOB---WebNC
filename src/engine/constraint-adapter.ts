@@ -22,6 +22,8 @@ export interface EvaluateWithEngineParams {
   statement?: string;
   sourceCode: string;
   constraints: ConstraintDefinition[];
+  labId?: string;
+  spendingCapUsd?: number;
   callProvider?: ProviderCallFn;
   model?: string;
   apiKey?: string;
@@ -48,6 +50,8 @@ export async function evaluateSubmissionWithEngine(
     statement = 'Evaluate submission against constraints.',
     sourceCode,
     constraints,
+    labId,
+    spendingCapUsd,
     callProvider,
     model,
     apiKey,
@@ -77,6 +81,8 @@ export async function evaluateSubmissionWithEngine(
     statement,
     constraints: semanticConstraintsToEvaluate,
     sourceCode,
+    labId,
+    spendingCapUsd,
     callProvider,
     model,
     apiKey,
