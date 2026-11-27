@@ -110,6 +110,36 @@ describe('Guardrails & First Limits (Criterion 5 — 10 points)', () => {
       expect(verdicts[0].verdict).toBe('pass');
       expect(verdicts[0].unsureReason).toBeNull();
     });
+
+    it.each([
+      ['null item', [null]],
+      ['non-integer line', [{ line: 1.5, text: '#include <iostream>' }]],
+      ['non-string text', [{ line: 1, text: 7 }]],
+    ])(
+      'should fallback to unsure (evidence_mismatch) without throwing on malformed evidence (%s)',
+      (_label, malformedEvidence) => {
+        const output = JSON.stringify({
+          verdicts: [
+            {
+              constraintId: 'C_SEMANTIC_01',
+              verdict: 'violation',
+              evidence: malformedEvidence,
+            },
+          ],
+        });
+
+        const verdicts = validateModelOutput(
+          output,
+          [semanticConstraint],
+          sampleSourceCode
+        );
+
+        expect(verdicts).toHaveLength(1);
+        expect(verdicts[0].verdict).toBe('unsure');
+        expect(verdicts[0].unsureReason).toBe('evidence_mismatch');
+        expect(verdicts[0].suggestedDeduction).toBe(0);
+      }
+    );
   });
 
   describe('2. Evidence Line Guard (Exact Code Verification)', () => {

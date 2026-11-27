@@ -39,26 +39,45 @@ export const DEEPSEEK_V4_FLASH_PRICING: ModelPricing = {
 
 /**
  * Resolves model pricing dynamically from environment variables,
- * falling back to GEMINI_15_FLASH_PRICING defaults if not specified.
+ * falling back to DeepSeek V4.1 Flash or Gemini 1.5 Flash defaults based on provider.
  */
 export function getModelPricingFromEnv(): ModelPricing {
-  const modelName = process.env.MODEL_NAME || GEMINI_15_FLASH_PRICING.modelName;
+  const isDeployProvider =
+    process.env.MODEL_PROVIDER === 'deploy' ||
+    Boolean(process.env.DEPLOY_API_KEY) ||
+    (process.env.MODEL_NAME ?? '').toLowerCase().includes('deepseek');
+  const defaultPricing = isDeployProvider
+    ? DEEPSEEK_V4_FLASH_PRICING
+    : GEMINI_15_FLASH_PRICING;
+
+  const modelName = process.env.MODEL_NAME || defaultPricing.modelName;
   const promptCost = process.env.MODEL_PROMPT_PRICE_PER_M
     ? Number(process.env.MODEL_PROMPT_PRICE_PER_M)
-    : GEMINI_15_FLASH_PRICING.costPerMillionPromptTokens;
+    : defaultPricing.costPerMillionPromptTokens;
   const completionCost = process.env.MODEL_COMPLETION_PRICE_PER_M
     ? Number(process.env.MODEL_COMPLETION_PRICE_PER_M)
-    : GEMINI_15_FLASH_PRICING.costPerMillionCompletionTokens;
+    : defaultPricing.costPerMillionCompletionTokens;
 
   return {
     modelName,
     costPerMillionPromptTokens: Number.isNaN(promptCost)
-      ? GEMINI_15_FLASH_PRICING.costPerMillionPromptTokens
+      ? defaultPricing.costPerMillionPromptTokens
       : promptCost,
     costPerMillionCompletionTokens: Number.isNaN(completionCost)
-      ? GEMINI_15_FLASH_PRICING.costPerMillionCompletionTokens
+      ? defaultPricing.costPerMillionCompletionTokens
       : completionCost,
   };
+}
+
+/**
+ * Resolves MODEL_SPENDING_CAP_USD from environment variables (returns null if unset/invalid).
+ */
+export function getSpendingCapUsdFromEnv(): number | null {
+  const raw = process.env.MODEL_SPENDING_CAP_USD;
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 export interface LabCostParams {
@@ -172,4 +191,18 @@ export async function readCallLog(
     }
     throw error;
   }
+}
+
+/**
+ * Computes total cumulative USD spend recorded in the call log.
+ */
+export async function getTotalSpentUsd(
+  logFilePath: string = DEFAULT_CALL_LOG_PATH
+): Promise<number> {
+  const entries = await readCallLog(logFilePath);
+  return entries.reduce(
+    (sum, entry) =>
+      sum + (typeof entry.costUsd === 'number' ? entry.costUsd : 0),
+    0
+  );
 }

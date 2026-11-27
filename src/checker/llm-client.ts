@@ -20,6 +20,8 @@ import {
   appendCallLog,
   DEFAULT_CALL_LOG_PATH,
   getModelPricingFromEnv,
+  getSpendingCapUsdFromEnv,
+  getTotalSpentUsd,
 } from './call-logger.js';
 import { validateModelOutput, withTimeout } from './guardrails.js';
 import { buildSanitizedPrompt } from './prompt-sanitizer.js';
@@ -306,6 +308,27 @@ export async function evaluateSemanticWithLlm(
     }));
   }
 
+  // 1b. Enforce MODEL_SPENDING_CAP_USD safety cap
+  const spendingCapUsd = getSpendingCapUsdFromEnv();
+  if (spendingCapUsd !== null) {
+    const spentUsd = await getTotalSpentUsd(logFilePath);
+    if (spentUsd >= spendingCapUsd) {
+      if (process.env.NODE_ENV !== 'test') {
+        console.warn(
+          `[LLM Client] Spending cap reached ($${spentUsd.toFixed(4)} >= $${spendingCapUsd.toFixed(2)}); returning unsure.`
+        );
+      }
+      return semanticConstraints.map((c) => ({
+        constraintId: c.id,
+        verdict: 'unsure',
+        evidence: [],
+        suggestedDeduction: 0,
+        unsureReason: 'model_unsure',
+        decidedBy: 'llm',
+      }));
+    }
+  }
+
   // 2. Build sanitized prompt (comments and student info stripped)
   const sanitizedPrompt = buildSanitizedPrompt({
     statement,
@@ -373,10 +396,21 @@ export async function evaluateSemanticWithLlm(
     logFilePath
   );
 
-  // 4. Validate output against schema and verify evidence lines
-  return validateModelOutput(
-    providerResult.rawOutput,
-    semanticConstraints,
-    sourceCode
-  );
+  // 4. Validate output against schema and verify evidence lines (never throw out to worker)
+  try {
+    return validateModelOutput(
+      providerResult.rawOutput,
+      semanticConstraints,
+      sourceCode
+    );
+  } catch {
+    return semanticConstraints.map((c) => ({
+      constraintId: c.id,
+      verdict: 'unsure',
+      evidence: [],
+      suggestedDeduction: 0,
+      unsureReason: 'schema_invalid',
+      decidedBy: 'llm',
+    }));
+  }
 }

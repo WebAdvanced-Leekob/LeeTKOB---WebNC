@@ -79,7 +79,7 @@ export function extractJsonFromOutput(rawOutput: string): string {
  * 2. Match the verbatim content of that line (ignoring trailing whitespace).
  */
 export function verifyEvidenceLines(
-  evidence: EvidenceLine[],
+  evidence: unknown[],
   sourceLines: string[]
 ): boolean {
   if (!Array.isArray(evidence) || evidence.length === 0) {
@@ -87,8 +87,21 @@ export function verifyEvidenceLines(
   }
 
   for (const item of evidence) {
-    const { line, text } = item;
-    if (typeof line !== 'number' || line < 1 || line > sourceLines.length) {
+    if (typeof item !== 'object' || item === null) {
+      return false;
+    }
+
+    const { line, text } = item as Record<string, unknown>;
+    if (
+      typeof line !== 'number' ||
+      !Number.isInteger(line) ||
+      line < 1 ||
+      line > sourceLines.length
+    ) {
+      return false;
+    }
+
+    if (typeof text !== 'string') {
       return false;
     }
 
