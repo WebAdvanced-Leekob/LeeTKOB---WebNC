@@ -49,11 +49,17 @@ export interface StoredReviewQueueResponse extends ReviewQueueResponse {
   items: StoredReviewQueueItem[];
 }
 
+export interface PassSamplingWindow {
+  totalPasses: number;
+  currentSampledItemId: string | null;
+}
+
 interface DataStoreState {
   accounts: Record<string, AuthUser>;
   labs: Record<string, StoredLab>;
   submissions: Record<string, StoredSubmission>;
   reviewItems: Record<string, StoredReviewQueueItem>;
+  passSamplingWindows?: Record<string, PassSamplingWindow>;
 }
 
 function createEmptyDataStoreState(): DataStoreState {
@@ -62,6 +68,7 @@ function createEmptyDataStoreState(): DataStoreState {
     labs: {},
     submissions: {},
     reviewItems: {},
+    passSamplingWindows: {},
   };
 }
 
@@ -177,6 +184,70 @@ export class DataStore {
       state.reviewItems[item.id] = structuredClone(item);
       return { result: undefined, changed: true };
     });
+  }
+
+  /**
+   * Records a 'pass' verdict using stratified reservoir sampling (1 random item per 10-pass window).
+   * Guarantees ceil(totalPasses * 0.1) random pass verdicts enter the review queue without
+   * always picking the first ones, and never overwrites an already-reviewed item.
+   */
+  recordPassVerdict(
+    item: StoredReviewQueueItem,
+    randomValue: number = Math.random()
+  ): boolean {
+    return this.updateState((state) => {
+      if (state.reviewItems[item.id]) {
+        throw new Error(`Review item '${item.id}' already exists.`);
+      }
+      if (!state.passSamplingWindows) {
+        state.passSamplingWindows = {};
+      }
+      const window = state.passSamplingWindows[item.labId] ?? {
+        totalPasses: 0,
+        currentSampledItemId: null,
+      };
+
+      const indexInWindow = window.totalPasses % 10;
+      window.totalPasses += 1;
+
+      let sampled = false;
+      if (indexInWindow === 0) {
+        state.reviewItems[item.id] = structuredClone(item);
+        window.currentSampledItemId = item.id;
+        sampled = true;
+      } else {
+        const probability = 1 / (indexInWindow + 1);
+        if (randomValue < probability) {
+          const prevId = window.currentSampledItemId;
+          const prevItem = prevId ? state.reviewItems[prevId] : undefined;
+          if (!prevItem) {
+            state.reviewItems[item.id] = structuredClone(item);
+            window.currentSampledItemId = item.id;
+            sampled = true;
+          } else if (prevItem.status === 'pending') {
+            delete state.reviewItems[prevId!];
+            state.reviewItems[item.id] = structuredClone(item);
+            window.currentSampledItemId = item.id;
+            sampled = true;
+          }
+        }
+      }
+
+      state.passSamplingWindows[item.labId] = window;
+      return { result: sampled, changed: true };
+    });
+  }
+
+  getPassSamplingStats(labId: string): {
+    totalPasses: number;
+    sampledPasses: number;
+  } {
+    const state = this.readState();
+    const totalPasses = state.passSamplingWindows?.[labId]?.totalPasses ?? 0;
+    const sampledPasses = Object.values(state.reviewItems).filter(
+      (item) => item.labId === labId && item.verdict === 'pass'
+    ).length;
+    return { totalPasses, sampledPasses };
   }
 
   getReviewItem(itemId: string): StoredReviewQueueItem | null {

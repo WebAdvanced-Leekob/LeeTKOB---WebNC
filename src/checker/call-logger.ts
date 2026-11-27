@@ -144,6 +144,7 @@ export function calculateLabCost(params: LabCostParams): LabCostResult {
 
 export interface CallLogEntry {
   timestamp?: string;
+  labId?: string;
   requestId: string;
   model: string;
   promptTokens: number;
@@ -195,14 +196,17 @@ export async function readCallLog(
 
 /**
  * Computes total cumulative USD spend recorded in the call log.
+ * When labId is provided, totals only calls belonging to that specific lab.
  */
 export async function getTotalSpentUsd(
-  logFilePath: string = DEFAULT_CALL_LOG_PATH
+  logFilePath: string = DEFAULT_CALL_LOG_PATH,
+  labId?: string
 ): Promise<number> {
   const entries = await readCallLog(logFilePath);
-  return entries.reduce(
-    (sum, entry) =>
-      sum + (typeof entry.costUsd === 'number' ? entry.costUsd : 0),
-    0
-  );
+  return entries.reduce((sum, entry) => {
+    if (labId !== undefined && entry.labId !== labId) {
+      return sum;
+    }
+    return sum + (typeof entry.costUsd === 'number' ? entry.costUsd : 0);
+  }, 0);
 }

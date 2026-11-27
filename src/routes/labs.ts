@@ -41,6 +41,7 @@ labsRouter.post(
       statement = '',
       testCases,
       constraints,
+      spendingCapUsd,
     } = (req.body ?? {}) as Partial<Lab>;
 
     if (
@@ -48,12 +49,16 @@ labsRouter.post(
       title.trim().length === 0 ||
       typeof statement !== 'string' ||
       !Array.isArray(testCases) ||
-      !Array.isArray(constraints)
+      !Array.isArray(constraints) ||
+      (spendingCapUsd !== undefined &&
+        (typeof spendingCapUsd !== 'number' ||
+          !Number.isFinite(spendingCapUsd) ||
+          spendingCapUsd <= 0))
     ) {
       badRequest(
         res,
         req.originalUrl,
-        'Provide a non-empty title, testCases and constraints arrays, and a string statement if supplied.',
+        'Provide a non-empty title, testCases and constraints arrays, a string statement if supplied, and a positive spendingCapUsd if supplied.',
         undefined,
         'invalid-lab-body',
         'Invalid Lab Body'
@@ -68,6 +73,7 @@ labsRouter.post(
       statement,
       testCases,
       constraints,
+      ...(spendingCapUsd !== undefined ? { spendingCapUsd } : {}),
     });
 
     res.status(201).json(lab);

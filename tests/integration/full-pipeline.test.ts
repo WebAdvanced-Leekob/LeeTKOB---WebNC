@@ -170,14 +170,14 @@ describe('Full Pipeline — Criterion 1 Scenario', () => {
       });
     }
 
-    // 6. All six items, including passes, require human review.
+    // 6. Violations, unsures, and a random 10% sample (ceil(2 * 0.1) = 1) of passes require human review (5 items total).
     const blockedStatus = await request(app)
       .get(`${base}/publish-status`)
       .set('Authorization', 'Bearer ta-class-1');
     expect(blockedStatus.status).toBe(200);
     expect(blockedStatus.body).toMatchObject({
       canPublish: false,
-      unreviewedCount: 6,
+      unreviewedCount: 5,
     });
     expect(blockedStatus.body.unreviewedCount).toBeGreaterThan(0);
 
@@ -195,7 +195,7 @@ describe('Full Pipeline — Criterion 1 Scenario', () => {
       status: 400,
       detail: expect.any(String),
       instance: `${base}/publish`,
-      unreviewedCount: 6,
+      unreviewedCount: 5,
     });
     expect(defaultDataStore.getLab(labId)).not.toHaveProperty('status');
 
@@ -205,104 +205,60 @@ describe('Full Pipeline — Criterion 1 Scenario', () => {
       .set('Authorization', 'Bearer ta-class-1');
     expect(queue.status).toBe(200);
     const { items, pagination } = queue.body as ReviewQueueResponse;
-    expect(items).toHaveLength(6);
+    expect(items).toHaveLength(5);
 
     const violationLine =
       violationCode
         .split('\n')
         .findIndex((line) => line.includes(sortCall.trim())) + 1;
 
-    const expectedVerdicts: Record<
-      string,
-      Array<{
-        constraintId: string;
-        verdict: 'pass' | 'violation' | 'unsure';
-        suggestedDeduction: number;
-        evidence: Array<{ line: number; text: string }>;
-        unsureReason: string | null;
-      }>
-    > = {
-      [submissionId1]: [
-        {
-          constraintId: 'NO_STD_SORT',
-          verdict: 'pass',
-          suggestedDeduction: 0,
-          evidence: [],
-          unsureReason: null,
-        },
-        {
-          constraintId: 'USE_RECURSION',
-          verdict: 'unsure',
-          suggestedDeduction: 0,
-          evidence: [],
-          unsureReason: 'model_unsure',
-        },
-      ],
-      [submissionId2]: [
-        {
-          constraintId: 'NO_STD_SORT',
-          verdict: 'violation',
-          suggestedDeduction: 3,
-          evidence: [{ line: violationLine, text: sortCall }],
-          unsureReason: null,
-        },
-        {
-          constraintId: 'USE_RECURSION',
-          verdict: 'unsure',
-          suggestedDeduction: 0,
-          evidence: [],
-          unsureReason: 'model_unsure',
-        },
-      ],
-      [submissionId3]: [
-        {
-          constraintId: 'NO_STD_SORT',
-          verdict: 'pass',
-          suggestedDeduction: 0,
-          evidence: [],
-          unsureReason: null,
-        },
-        {
-          constraintId: 'USE_RECURSION',
-          verdict: 'unsure',
-          suggestedDeduction: 0,
-          evidence: [],
-          unsureReason: 'model_unsure',
-        },
-      ],
-    };
+    // Verify all 1 violation and 3 unsure items are present
+    const nonPassItems = items.filter((item) => item.verdict !== 'pass');
+    expect(nonPassItems).toHaveLength(4);
+    expect(
+      items.find(
+        (item) =>
+          item.submissionId === submissionId2 &&
+          item.constraintId === 'NO_STD_SORT'
+      )
+    ).toMatchObject({
+      verdict: 'violation',
+      suggestedDeduction: 3,
+      evidence: [{ line: violationLine, text: sortCall }],
+      unsureReason: null,
+      status: 'pending',
+    });
 
-    for (const [submissionId] of [
-      [submissionId1, cleanCode],
-      [submissionId2, violationCode],
-      [submissionId3, injectionCode],
-    ]) {
-      const expected = expectedVerdicts[submissionId];
+    for (const sid of [submissionId1, submissionId2, submissionId3]) {
       expect(
-        items.filter((item) => item.submissionId === submissionId)
-      ).toEqual(
-        labBody.constraints.map((constraint, index) => ({
-          id: expect.any(String),
-          submissionId,
-          studentAnonymousId: 'std-100',
-          constraintId: constraint.id,
-          constraintDescription: constraint.description,
-          verdict: expected[index].verdict,
-          suggestedDeduction: expected[index].suggestedDeduction,
-          evidence: expected[index].evidence,
-          unsureReason: expected[index].unsureReason,
-          status: 'pending',
-          reviewedBy: null,
-          reviewedAt: null,
-        }))
-      );
+        items.find(
+          (item) =>
+            item.submissionId === sid && item.constraintId === 'USE_RECURSION'
+        )
+      ).toMatchObject({
+        verdict: 'unsure',
+        suggestedDeduction: 0,
+        evidence: [],
+        unsureReason: 'model_unsure',
+        status: 'pending',
+      });
     }
+
+    // Verify random 10% (ceil(2 * 0.1) = 1) of pass verdicts was sampled
+    const sampledPasses = items.filter((item) => item.verdict === 'pass');
+    expect(sampledPasses).toHaveLength(1);
+    expect([submissionId1, submissionId3]).toContain(
+      sampledPasses[0].submissionId
+    );
+    expect(sampledPasses[0].constraintId).toBe('NO_STD_SORT');
+    expect(sampledPasses[0].suggestedDeduction).toBe(0);
+
     const aliasQueue = await request(app)
       .get(`${base}/review-queue`)
       .set('Authorization', 'Bearer ta-class-1');
     expect(aliasQueue.status).toBe(200);
     expect(aliasQueue.body).toEqual(queue.body);
-    expect(pagination.totalItems).toBe(6);
+    expect(pagination.totalItems).toBe(5);
     for (const item of items) {
       const reviewed = await request(app)
         .post(`${base}/review-queue/${item.id}/decision`)

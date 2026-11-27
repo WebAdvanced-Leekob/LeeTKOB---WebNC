@@ -72,6 +72,7 @@ export interface Lab {
   statement: string;
   testCases: TestCase[];
   constraints: ConstraintDefinition[];
+  spendingCapUsd?: number;
 }
 
 /**

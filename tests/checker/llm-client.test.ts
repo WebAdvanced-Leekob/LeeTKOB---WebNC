@@ -379,7 +379,7 @@ describe('LLM Client & Call Logger (Criterion 4 — 20 points)', () => {
       }
     });
 
-    it('should enforce MODEL_SPENDING_CAP_USD and return unsure without calling provider when cap is reached', async () => {
+    it('should enforce MODEL_SPENDING_CAP_USD and return unsure (cost_cap_exceeded) without calling provider when cap is reached', async () => {
       const origCap = process.env.MODEL_SPENDING_CAP_USD;
       process.env.MODEL_SPENDING_CAP_USD = '0.05';
 
@@ -411,8 +411,80 @@ describe('LLM Client & Call Logger (Criterion 4 — 20 points)', () => {
 
         expect(verdicts).toHaveLength(1);
         expect(verdicts[0].verdict).toBe('unsure');
-        expect(verdicts[0].unsureReason).toBe('model_unsure');
+        expect(verdicts[0].unsureReason).toBe('cost_cap_exceeded');
         expect(mockFetchFn).not.toHaveBeenCalled();
+      } finally {
+        if (origCap !== undefined) {
+          process.env.MODEL_SPENDING_CAP_USD = origCap;
+        } else {
+          delete process.env.MODEL_SPENDING_CAP_USD;
+        }
+      }
+    });
+
+    it('should track cost cap independently per labId so one lab reaching its cap does not block another lab', async () => {
+      const origCap = process.env.MODEL_SPENDING_CAP_USD;
+      process.env.MODEL_SPENDING_CAP_USD = '0.05';
+
+      await appendCallLog(
+        {
+          labId: 'lab-over-cap',
+          requestId: 'cap-lab-a',
+          model: 'gemini-1.5-flash',
+          promptTokens: 1000,
+          completionTokens: 500,
+          totalTokens: 1500,
+          latencyMs: 100,
+          costUsd: 0.06,
+          sanitizedPrompt: 'prompt',
+          rawResponse: '{}',
+        },
+        testLogPath
+      );
+
+      const mockFetchFn = vi.fn().mockResolvedValue({
+        requestId: 'lab-b-req-001',
+        rawOutput: JSON.stringify({
+          verdicts: [
+            { constraintId: 'C_MERGE_SORT', verdict: 'pass', evidence: [] },
+          ],
+        }),
+        promptTokens: 400,
+        completionTokens: 30,
+        latencyMs: 120,
+      });
+
+      try {
+        // Lab A has reached its cap -> returns unsure with cost_cap_exceeded
+        const labAVerdicts = await evaluateSemanticWithLlm({
+          statement: 'Implement recursive merge sort.',
+          constraints: [semanticConstraint],
+          sourceCode: sampleStudentCode,
+          labId: 'lab-over-cap',
+          callProvider: mockFetchFn,
+          logFilePath: testLogPath,
+        });
+
+        expect(labAVerdicts[0].verdict).toBe('unsure');
+        expect(labAVerdicts[0].unsureReason).toBe('cost_cap_exceeded');
+        expect(mockFetchFn).not.toHaveBeenCalled();
+
+        // Lab B has $0.00 spent -> still calls the model and records labId in call log
+        const labBVerdicts = await evaluateSemanticWithLlm({
+          statement: 'Implement recursive merge sort.',
+          constraints: [semanticConstraint],
+          sourceCode: sampleStudentCode,
+          labId: 'lab-fresh',
+          callProvider: mockFetchFn,
+          logFilePath: testLogPath,
+        });
+
+        expect(labBVerdicts[0].verdict).toBe('pass');
+        expect(mockFetchFn).toHaveBeenCalledTimes(1);
+
+        const logs = await readCallLog(testLogPath);
+        const labBLog = logs.find((l) => l.requestId === 'lab-b-req-001');
+        expect(labBLog?.labId).toBe('lab-fresh');
       } finally {
         if (origCap !== undefined) {
           process.env.MODEL_SPENDING_CAP_USD = origCap;

@@ -43,6 +43,8 @@ export interface EvaluateSemanticParams {
   statement: string;
   constraints: ConstraintDefinition[];
   sourceCode: string;
+  labId?: string;
+  spendingCapUsd?: number;
   model?: string;
   apiKey?: string;
   callProvider?: ProviderCallFn;
@@ -279,10 +281,12 @@ export async function evaluateSemanticWithLlm(
     statement,
     constraints,
     sourceCode,
+    labId,
+    spendingCapUsd: paramSpendingCapUsd,
     model = process.env.MODEL_NAME || defaultModel,
     apiKey,
     callProvider,
-    logFilePath = DEFAULT_CALL_LOG_PATH,
+    logFilePath = process.env.CALL_LOG_PATH || DEFAULT_CALL_LOG_PATH,
     timeoutMs = 30000,
   } = params;
 
@@ -308,14 +312,20 @@ export async function evaluateSemanticWithLlm(
     }));
   }
 
-  // 1b. Enforce MODEL_SPENDING_CAP_USD safety cap
-  const spendingCapUsd = getSpendingCapUsdFromEnv();
+  // 1b. Enforce per-lab spending cap (falls back to global MODEL_SPENDING_CAP_USD)
+  const spendingCapUsd =
+    paramSpendingCapUsd !== undefined &&
+    Number.isFinite(paramSpendingCapUsd) &&
+    paramSpendingCapUsd > 0
+      ? paramSpendingCapUsd
+      : getSpendingCapUsdFromEnv();
+
   if (spendingCapUsd !== null) {
-    const spentUsd = await getTotalSpentUsd(logFilePath);
+    const spentUsd = await getTotalSpentUsd(logFilePath, labId);
     if (spentUsd >= spendingCapUsd) {
       if (process.env.NODE_ENV !== 'test') {
         console.warn(
-          `[LLM Client] Spending cap reached ($${spentUsd.toFixed(4)} >= $${spendingCapUsd.toFixed(2)}); returning unsure.`
+          `[LLM Client] Spending cap reached${labId ? ` for lab ${labId}` : ''} ($${spentUsd.toFixed(4)} >= $${spendingCapUsd.toFixed(2)}); returning unsure (cost_cap_exceeded).`
         );
       }
       return semanticConstraints.map((c) => ({
@@ -323,7 +333,7 @@ export async function evaluateSemanticWithLlm(
         verdict: 'unsure',
         evidence: [],
         suggestedDeduction: 0,
-        unsureReason: 'model_unsure',
+        unsureReason: 'cost_cap_exceeded',
         decidedBy: 'llm',
       }));
     }
@@ -383,6 +393,7 @@ export async function evaluateSemanticWithLlm(
 
   await appendCallLog(
     {
+      ...(labId !== undefined ? { labId } : {}),
       requestId: providerResult.requestId,
       model,
       promptTokens,
