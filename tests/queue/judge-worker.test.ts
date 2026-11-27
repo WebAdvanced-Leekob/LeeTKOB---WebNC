@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { evaluateSubmission } from '../../src/engine/constraint-adapter.js';
+import { evaluateSubmissionWithEngine } from '../../src/engine/constraint-adapter.js';
 import { JudgeWorker } from '../../src/queue/judge-worker.js';
 import { SubmissionQueue } from '../../src/queue/submission-queue.js';
 import { runSandboxCode } from '../../src/sandbox/runner.js';
@@ -9,7 +9,7 @@ import type { SandboxExecutionResult } from '../../src/types/sandbox.types.js';
 
 vi.mock('../../src/sandbox/runner.js', () => ({ runSandboxCode: vi.fn() }));
 vi.mock('../../src/engine/constraint-adapter.js', () => ({
-  evaluateSubmission: vi.fn(),
+  evaluateSubmissionWithEngine: vi.fn(),
 }));
 
 const result: SandboxExecutionResult = {
@@ -32,7 +32,7 @@ function setup() {
     id: randomUUID(),
     classId: 'class-1',
     title: 'Worker test',
-    statement: '',
+    statement: 'Implement recursive merge sort.',
     testCases: [{ id: 'tc1', input: '', expectedOutput: 'OK' }],
     constraints: [
       { id: 'C1', description: 'No sort', deduction: 3, type: 'ban-list' },
@@ -52,7 +52,7 @@ function setup() {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(runSandboxCode).mockResolvedValue(result);
-  vi.mocked(evaluateSubmission).mockReturnValue([
+  vi.mocked(evaluateSubmissionWithEngine).mockResolvedValue([
     {
       constraintId: 'C1',
       verdict: 'unsure',
@@ -75,11 +75,12 @@ describe('Judge worker pipeline', () => {
       await queue.enqueue(job);
       await worker[method]();
       expect(runSandboxCode).toHaveBeenCalledTimes(1);
-      expect(evaluateSubmission).toHaveBeenCalledTimes(1);
-      expect(evaluateSubmission).toHaveBeenCalledWith(
-        job.sourceCode,
-        lab.constraints
-      );
+      expect(evaluateSubmissionWithEngine).toHaveBeenCalledTimes(1);
+      expect(evaluateSubmissionWithEngine).toHaveBeenCalledWith({
+        statement: lab.statement,
+        sourceCode: job.sourceCode,
+        constraints: lab.constraints,
+      });
       expect(store.getSubmission(job.submissionId)).toMatchObject({
         status: 'completed',
         result,
@@ -105,19 +106,24 @@ describe('Judge worker pipeline', () => {
     }
   );
 
-  it('evaluates compiled submissions even when test cases fail', async () => {
-    const { queue, worker, job, store } = setup();
-    vi.mocked(runSandboxCode).mockResolvedValue({
-      ...result,
-      status: 'WRONG_ANSWER',
-    });
-    await queue.enqueue(job);
-    await worker.startAndDrain();
-    expect(evaluateSubmission).toHaveBeenCalledTimes(1);
-    expect(store.getSubmission(job.submissionId)?.result?.status).toBe(
-      'WRONG_ANSWER'
-    );
-  });
+  it.each(['WRONG_ANSWER', 'TIME_LIMIT_EXCEEDED', 'RUNTIME_ERROR'] as const)(
+    'skips constraint evaluation when compiled submission has status %s',
+    async (nonAcceptedStatus) => {
+      const { queue, worker, job, store, lab } = setup();
+      vi.mocked(runSandboxCode).mockResolvedValue({
+        ...result,
+        compileSuccess: true,
+        status: nonAcceptedStatus,
+      });
+      await queue.enqueue(job);
+      await worker.startAndDrain();
+      expect(evaluateSubmissionWithEngine).not.toHaveBeenCalled();
+      expect(store.getReviewQueue(lab.id).items).toEqual([]);
+      expect(store.getSubmission(job.submissionId)?.result?.status).toBe(
+        nonAcceptedStatus
+      );
+    }
+  );
 
   it.each(['compile error', 'sandbox exception'])(
     'skips constraints and persists failure for %s',
@@ -136,7 +142,7 @@ describe('Judge worker pipeline', () => {
       }
       await queue.enqueue(job);
       await worker.startAndDrain();
-      expect(evaluateSubmission).not.toHaveBeenCalled();
+      expect(evaluateSubmissionWithEngine).not.toHaveBeenCalled();
       expect(store.getReviewQueue(lab.id).items).toEqual([]);
       expect(
         store.getSubmission(job.submissionId)?.result?.compileSuccess

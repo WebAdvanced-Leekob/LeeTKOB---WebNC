@@ -364,3 +364,12 @@ Kept: `leetkob-sandbox` image build service, `leetkob-api` port mapping (`3000:3
 Changed: Updated `docker-compose.yml` to add `leetkob-worker` (`command: ["npm", "run", "start:worker"]`, `/var/run/docker.sock` mount, `group_add`, `depends_on: leetkob-sandbox`), removed `/var/run/docker.sock` and `DOCKER_HOST` from `leetkob-api`, and added shared named volume `leetkob-data:/app/.leetkob-data` with explicit `QUEUE_STORE_PATH` and `DATA_STORE_PATH`. Updated `Dockerfile` to pre-create `/app/.leetkob-data` owned by `node:node` so the mounted volume is writable by the non-root `node` user.
 Rejected: Mounting Docker socket on the API container or storing queue/data separately inside container-local filesystems.
 By hand: Verified `npm run build` (`dist/server.js` and `dist/worker.js`) and `npm run format:check` pass.
+
+
+## 2026-11-27 — wire judge worker to full async LLM constraint engine for ACCEPTED submissions only
+Tool: Antigravity (Gemini 4 Hydrogen)
+Asked for: Update `src/queue/judge-worker.ts` to call `await evaluateSubmissionWithEngine(...)` with `lab.statement` instead of synchronous `evaluateSubmission`, and restrict constraint checking strictly to `result.status === 'ACCEPTED'` submissions.
+Kept: Idempotent result storage, DataStore review queue item insertion, and fail-safe handling for compile errors and sandbox exceptions.
+Changed: Replaced `evaluateSubmission(job.sourceCode, lab.constraints)` with `await evaluateSubmissionWithEngine({ statement: lab.statement, sourceCode: job.sourceCode, constraints: lab.constraints })` in `src/queue/judge-worker.ts`. Tightened the guard from `result.compileSuccess || result.status === 'ACCEPTED'` to `result.status === 'ACCEPTED'` so `WRONG_ANSWER`, `TIME_LIMIT_EXCEEDED`, and `RUNTIME_ERROR` submissions skip constraint evaluation. Updated `tests/queue/judge-worker.test.ts`, `tests/integration/full-pipeline.test.ts` (explicit `MODEL_OFF=1` for deterministic offline integration), and `tests/queue/cross-process.test.ts`.
+Rejected: Evaluating constraints on failing submissions or bypassing the LLM semantic pipeline inside the background worker.
+By hand: Verified `format:fix`, `typecheck`, `lint`, and `npm test` (23 files: 150 passed, 9 Docker-only security tests skipped locally when Docker daemon is stopped).

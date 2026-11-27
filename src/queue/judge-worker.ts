@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { evaluateSubmission } from '../engine/constraint-adapter.js';
+import { evaluateSubmissionWithEngine } from '../engine/constraint-adapter.js';
 import { runSandboxCode } from '../sandbox/runner.js';
 import { defaultDataStore, DataStore } from '../store/data-store.js';
 import type { SandboxExecutionResult } from '../types/sandbox.types.js';
@@ -72,8 +72,12 @@ export class JudgeWorker {
       }
 
       const lab = this.dataStore.getLab(job.labId);
-      if (lab && (result.compileSuccess || result.status === 'ACCEPTED')) {
-        const verdicts = evaluateSubmission(job.sourceCode, lab.constraints);
+      if (lab && result.status === 'ACCEPTED') {
+        const verdicts = await evaluateSubmissionWithEngine({
+          statement: lab.statement,
+          sourceCode: job.sourceCode,
+          constraints: lab.constraints,
+        });
         for (const verdict of verdicts) {
           this.dataStore.addReviewItem({
             id: randomUUID(),
